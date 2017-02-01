@@ -1,0 +1,12 @@
+[package]
+name = "jrmuizel-pdf-info"
+version = "0.1.0"
+authors = ["Jeff Muizelaar <jmuizelaar@mozilla.com>"]
+
+[dependencies]
+encoding = "0.2.33"
+flate2 = "0.2.17"
+pom = "0.8.1"
+
+[dependencies.lopdf]
+path = "/Users/jrmuizel/src/lopdf"
