@@ -288,6 +288,7 @@ fn main() {
     println!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
     for dict in Pages::new(&doc) {
         println!("page {:?}", dict);
+        println!("resources {:?}", doc.get_object(dict.get("Resources").unwrap().as_reference().unwrap()).unwrap().as_dict());
         // Contents can point to either an array of references or a single reference
         match dict.get("Contents") {
             Some(&Object::Reference(ref id)) => {
