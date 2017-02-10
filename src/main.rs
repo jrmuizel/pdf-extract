@@ -141,10 +141,7 @@ impl<'a> Iterator for Pages<'a> {
                     return None;
                 }
                 let mut parent_id = self.cur.get("Parent").unwrap().as_reference().unwrap();
-                let mut parent = self.doc.get_object(parent_id).and_then(
-                                                                     |x| match x {
-                                                                     &Object::Dictionary(ref dict) => { Some(dict) }
-                                                                     _ => { None }});
+                let mut parent = self.doc.get_object(parent_id).and_then(|x| x.as_dict());
                 if let Some(ref parent) = parent {
                     let mut kids = parent.get("Kids").and_then(|x| x.as_array()).unwrap();
                     let mut parent_index = 0;
@@ -160,10 +157,7 @@ impl<'a> Iterator for Pages<'a> {
                         let mut parent = *parent;
                         loop {
                             let child_id = kids[parent_index].as_reference().unwrap();
-                            let child = self.doc.get_object(child_id).and_then(
-                                                                               |x| match x {
-                                                                               &Object::Dictionary(ref dict) => { Some(dict) }
-                                                                               _ => { None }}).unwrap();
+                            let child = self.doc.get_object(child_id).and_then(|x| x.as_dict()).unwrap();
                             if get_type(child) == "Page" {
                                 println!("found page {:?}", parent);
                                 self.index = 0;
@@ -189,10 +183,7 @@ impl<'a> Iterator for Pages<'a> {
         }
         self.index += 1;
         let mut kids = self.cur.get("Kids").and_then(|x| x.as_array()).unwrap();
-        return Some(self.doc.get_object(kids[self.index-1].as_reference().unwrap()).and_then(
-                                                                                              |x| match x {
-                                                                                              &Object::Dictionary(ref dict) => { Some(dict) }
-                                                                                              _ => { None }}).unwrap());
+        return Some(self.doc.get_object(kids[self.index-1].as_reference().unwrap()).and_then(|x| x.as_dict()).unwrap());
     }
 }
 
