@@ -9,7 +9,8 @@ extern crate encoding;
 extern crate pom;
 use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_16BE;
-
+use std::fmt;
+use std::io::Cursor;
 
 fn get_info(doc: &Document) -> Option<&Dictionary> {
     match doc.trailer.get("Info") {
@@ -210,17 +211,61 @@ fn filter_data(contents: &Stream) -> Vec<u8> {
     }
     data
 }
-
 struct TextState<'a>
 {
-    font: &'a str,
+    font: Option<PdfFont<'a>>,
     size: f64
 }
 
-fn process_stream(contents: &Stream) {
-    let data = filter_data(contents);
+fn get_obj<'a>(doc: &'a Document, o: &Object) -> &'a Object
+{
+    doc.get_object(o.as_reference().unwrap()).unwrap()
+}
+#[derive(Copy, Clone)]
+struct PdfFont<'a> {
+    font: &'a Dictionary,
+    doc: &'a Document
+}
+
+impl<'a> PdfFont<'a> {
+    fn get_encoding(&self) -> &'a Object {
+        get_obj(self.doc, self.font.get("Encoding").unwrap())
+    }
+    fn get_descriptor(&self) -> PdfFontDescriptor {
+        let desc = get_obj(self.doc, self.font.get("FontDescriptor").unwrap()).as_dict().unwrap();
+        PdfFontDescriptor{desc: desc, doc: self.doc}
+    }
+}
+
+impl<'a> fmt::Debug for PdfFont<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.font.fmt(f)
+    }
+}
+
+
+#[derive(Copy, Clone)]
+struct PdfFontDescriptor<'a> {
+    desc: &'a Dictionary,
+    doc: &'a Document
+}
+
+impl<'a> PdfFontDescriptor<'a> {
+    fn get_file(&self) -> &'a Object {
+        get_obj(self.doc, self.desc.get("FontFile").unwrap())
+    }
+}
+
+impl<'a> fmt::Debug for PdfFontDescriptor<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.desc.fmt(f)
+    }
+}
+
+fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
+    let data = contents.decompressed_content().unwrap();
     let content = contents.decode_content(&data).unwrap();
-    let mut ts = TextState { font:"", size:3. };
+    let mut ts = TextState { font: None, size:3. };
     for operation in &content.operations {
         match operation.operator.as_ref() {
             "TJ" => {
@@ -229,7 +274,8 @@ fn process_stream(contents: &Stream) {
                         for e in array {
                             match e {
                                 &Object::String(ref s, StringFormat::Literal) => {
-                                    println!("{} {:?}", ts.font, to_utf8(s));
+                                    let font = ts.font.unwrap();
+                                    println!("{:?} {:?} {:?}", font, font.get_descriptor(), to_utf8(s));
                                 }
                                 _ => {}
                             }
@@ -247,7 +293,13 @@ fn process_stream(contents: &Stream) {
                 }
             }
             "Tf" => {
-                ts.font = operation.operands[0].as_name().unwrap();
+                let font = PdfFont{doc: doc, font: get_obj(doc, fonts.get(operation.operands[0].as_name().unwrap()).unwrap()).as_dict().unwrap()};
+                let file = font.get_descriptor().get_file();
+                let file_contents = filter_data(file.as_stream().unwrap());
+                let mut cursor = Cursor::new(&file_contents[..]);
+                //let f = Font::read(&mut cursor);
+                //println!("font file: {:?}", f);
+                ts.font = Some(font);
                 match operation.operands[1] {
                     Object::Real(size) => { ts.size = size }
                     _ => {}
@@ -279,13 +331,17 @@ fn main() {
     println!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
     for dict in Pages::new(&doc) {
         println!("page {:?}", dict);
-        println!("resources {:?}", doc.get_object(dict.get("Resources").unwrap().as_reference().unwrap()).unwrap().as_dict());
+        let resources = doc.get_object(dict.get("Resources").unwrap().as_reference().unwrap()).unwrap().as_dict().unwrap();
+        println!("resources {:?}", resources);
+        let font = resources.get("Font").unwrap().as_dict().unwrap();
+        println!("font {:?}", font);
+
         // Contents can point to either an array of references or a single reference
         match dict.get("Contents") {
             Some(&Object::Reference(ref id)) => {
                 match doc.get_object(*id).unwrap() {
                     &Object::Stream(ref contents) => {
-                        process_stream(contents);
+                        process_stream(&doc, contents, font);
                     }
                     _ => {}
                 }
@@ -295,7 +351,7 @@ fn main() {
                     let id = id.as_reference().unwrap();
                     match doc.get_object(id).unwrap() {
                         &Object::Stream(ref contents) => {
-                            process_stream(contents);
+                            process_stream(&doc, contents, font);
                         }
                         _ => {}
                     }
