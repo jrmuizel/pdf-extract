@@ -1,6 +1,7 @@
 extern crate lopdf;
 use lopdf::Document;
 use lopdf::Dictionary;
+use lopdf::content::Content;
 use lopdf::{Object, ObjectId, Stream};
 use lopdf::StringFormat;
 use std::env;
@@ -264,7 +265,7 @@ impl<'a> fmt::Debug for PdfFontDescriptor<'a> {
 
 fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
     let data = contents.decompressed_content().unwrap();
-    let content = contents.decode_content(&data).unwrap();
+    let content = Content::decode(&data).unwrap();
     let mut ts = TextState { font: None, size:3. };
     for operation in &content.operations {
         match operation.operator.as_ref() {
