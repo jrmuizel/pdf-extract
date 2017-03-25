@@ -8,6 +8,5 @@ encoding = "0.2.33"
 flate2 = "0.2.17"
 pom = "0.8.1"
 postscript = "0.11.1"
+lopdf = "0.8"
 
-[dependencies.lopdf]
-path = "/Users/jrmuizel/src/lopdf"

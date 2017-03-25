@@ -12,6 +12,7 @@ use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_16BE;
 use std::fmt;
 use std::io::Cursor;
+use std::str;
 
 fn get_info(doc: &Document) -> Option<&Dictionary> {
     match doc.trailer.get("Info") {
@@ -191,7 +192,7 @@ impl<'a> Iterator for Pages<'a> {
 
 fn get_type(o: &Dictionary) -> &str
 {
-    o.get("Type").and_then(|x| x.as_name()).unwrap()
+    o.type_name().unwrap()
 }
 
 fn filter_data(contents: &Stream) -> Vec<u8> {
@@ -294,7 +295,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
                 }
             }
             "Tf" => {
-                let font = PdfFont{doc: doc, font: get_obj(doc, fonts.get(operation.operands[0].as_name().unwrap()).unwrap()).as_dict().unwrap()};
+                let font = PdfFont{doc: doc, font: get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap()};
                 let file = font.get_descriptor().get_file();
                 let file_contents = filter_data(file.as_stream().unwrap());
                 let mut cursor = Cursor::new(&file_contents[..]);
