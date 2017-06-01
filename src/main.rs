@@ -7,7 +7,6 @@ use lopdf::StringFormat;
 use std::env;
 extern crate flate2;
 extern crate encoding;
-extern crate pom;
 use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_16BE;
 use std::fmt;
