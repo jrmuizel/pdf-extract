@@ -4,6 +4,7 @@ use lopdf::Dictionary;
 use lopdf::content::Content;
 use lopdf::{Object, ObjectId, Stream};
 use lopdf::StringFormat;
+use lopdf::*;
 use std::env;
 extern crate flate2;
 extern crate encoding;
@@ -107,7 +108,7 @@ struct Pages<'a> {
 impl<'a> Pages<'a> {
     fn new(doc: &Document) -> Pages {
         let catalog = get_catalog(doc);
-        let mut parent_id = catalog.get("Pages").unwrap().as_reference().unwrap();
+        let mut parent_id = catalog.get("Pages").unwrap().as_reference().expect("Pages dictionary must be an indirect reference");
         let mut parent = match doc.get_object(parent_id) {
                 Some(&Object::Dictionary(ref pages)) => { pages }
                 _ => { panic!() }
@@ -228,6 +229,13 @@ struct PdfFont<'a> {
     doc: &'a Document
 }
 
+fn maybe_deref<'a>(doc: &'a Document, o: &'a Object) -> &'a Object {
+    match o {
+        &Object::Reference(r) => doc.get_object(r).expect("missing object reference"),
+        _ => o
+    }
+}
+
 impl<'a> PdfFont<'a> {
     fn get_encoding(&self) -> &'a Object {
         get_obj(self.doc, self.font.get("Encoding").unwrap())
@@ -332,7 +340,7 @@ fn main() {
     println!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
     for dict in Pages::new(&doc) {
         println!("page {:?}", dict);
-        let resources = doc.get_object(dict.get("Resources").unwrap().as_reference().unwrap()).unwrap().as_dict().unwrap();
+        let resources = maybe_deref(&doc, dict.get("Resources").unwrap()).as_dict().unwrap();
         println!("resources {:?}", resources);
         let font = resources.get("Font").unwrap().as_dict().unwrap();
         println!("font {:?}", font);
