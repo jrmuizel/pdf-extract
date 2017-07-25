@@ -86,7 +86,7 @@ const PDFDocEncoding: &'static [u16] = &[
     0x00f3, 0x00f4, 0x00f5, 0x00f6, 0x00f7, 0x00f8, 0x00f9, 0x00fa, 0x00fb,
     0x00fc, 0x00fd, 0x00fe, 0x00ff];
 
-fn to_utf8(s: &Vec<u8>) -> String {
+fn to_utf8(s: &[u8]) -> String {
     if s.len() > 2 && s[0] == 0xfe && s[1] == 0xff {
         return UTF_16BE.decode(&s[2..], DecoderTrap::Strict).unwrap()
     } else {
@@ -223,11 +223,6 @@ fn get_obj<'a>(doc: &'a Document, o: &Object) -> &'a Object
 {
     doc.get_object(o.as_reference().unwrap()).unwrap()
 }
-#[derive(Copy, Clone)]
-struct PdfFont<'a> {
-    font: &'a Dictionary,
-    doc: &'a Document
-}
 
 fn maybe_deref<'a>(doc: &'a Document, o: &'a Object) -> &'a Object {
     match o {
@@ -235,6 +230,17 @@ fn maybe_deref<'a>(doc: &'a Document, o: &'a Object) -> &'a Object {
         _ => o
     }
 }
+
+fn maybe_get_obj<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<&'a Object> {
+    dict.get(key).map(|o| maybe_deref(doc, o))
+}
+
+#[derive(Copy, Clone)]
+struct PdfFont<'a> {
+    font: &'a Dictionary,
+    doc: &'a Document
+}
+
 
 impl<'a> PdfFont<'a> {
     fn get_encoding(&self) -> &'a Object {
@@ -259,9 +265,14 @@ struct PdfFontDescriptor<'a> {
     doc: &'a Document
 }
 
+
+
 impl<'a> PdfFontDescriptor<'a> {
-    fn get_file(&self) -> &'a Object {
-        get_obj(self.doc, self.desc.get("FontFile").unwrap())
+    fn get_file(&self) -> Option<&'a Object> {
+        maybe_get_obj(self.doc, self.desc, "FontFile")
+    }
+    fn get_name(&self) -> String {
+        to_utf8(get_obj(self.doc, self.desc.get("Name").unwrap()).as_name().unwrap())
     }
 }
 
@@ -304,10 +315,12 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
             "Tf" => {
                 let font = PdfFont{doc: doc, font: get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap()};
                 let file = font.get_descriptor().get_file();
-                let file_contents = filter_data(file.as_stream().unwrap());
-                let mut cursor = Cursor::new(&file_contents[..]);
-                //let f = Font::read(&mut cursor);
-                //println!("font file: {:?}", f);
+                if let Some(file) = file {
+                    let file_contents = filter_data(file.as_stream().unwrap());
+                    let mut cursor = Cursor::new(&file_contents[..]);
+                    //let f = Font::read(&mut cursor);
+                    //println!("font file: {:?}", f);
+                }
                 ts.font = Some(font);
                 match operation.operands[1] {
                     Object::Real(size) => { ts.size = size }
