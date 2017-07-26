@@ -235,6 +235,14 @@ fn maybe_get_obj<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Opti
     dict.get(key).map(|o| maybe_deref(doc, o))
 }
 
+fn get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> String {
+    to_utf8(dict.get(key).map(|o| maybe_deref(doc, o)).unwrap().as_name().unwrap())
+}
+
+fn maybe_get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<String> {
+    maybe_get_obj(doc, dict, key).and_then(|n| n.as_name()).map(|n| to_utf8(n))
+}
+
 #[derive(Copy, Clone)]
 struct PdfFont<'a> {
     font: &'a Dictionary,
@@ -246,9 +254,20 @@ impl<'a> PdfFont<'a> {
     fn get_encoding(&self) -> &'a Object {
         get_obj(self.doc, self.font.get("Encoding").unwrap())
     }
-    fn get_descriptor(&self) -> PdfFontDescriptor {
-        let desc = get_obj(self.doc, self.font.get("FontDescriptor").unwrap()).as_dict().unwrap();
-        PdfFontDescriptor{desc: desc, doc: self.doc}
+    fn get_type(&self) -> String {
+        get_name(self.doc, self.font, "Type")
+    }
+    fn get_subtype(&self) -> String {
+        get_name(self.doc, self.font, "Subtype")
+    }
+    /* For type1: This entry is obsolescent and its use is no longer recommended. (See
+     * implementation note 42 in Appendix H.) */
+    fn get_name(&self) -> Option<String> {
+        maybe_get_name(self.doc, self.font, "Name")
+    }
+
+    fn get_descriptor(&self) -> Option<PdfFontDescriptor> {
+        maybe_get_obj(self.doc, self.font, "FontDescriptor").and_then(|desc| desc.as_dict()).map(|desc| PdfFontDescriptor{desc: desc, doc: self.doc})
     }
 }
 
@@ -295,7 +314,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
                             match e {
                                 &Object::String(ref s, StringFormat::Literal) => {
                                     let font = ts.font.unwrap();
-                                    println!("{:?} {:?} {:?}", font, font.get_descriptor(), to_utf8(s));
+                                    println!("{:?} {} {:?}", font.get_name(), font.get_subtype(), to_utf8(s));
                                 }
                                 _ => {}
                             }
@@ -314,7 +333,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
             }
             "Tf" => {
                 let font = PdfFont{doc: doc, font: get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap()};
-                let file = font.get_descriptor().get_file();
+                let file = font.get_descriptor().and_then(|desc| desc.get_file());
                 if let Some(file) = file {
                     let file_contents = filter_data(file.as_stream().unwrap());
                     let mut cursor = Cursor::new(&file_contents[..]);
