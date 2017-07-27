@@ -8,6 +8,7 @@ use lopdf::*;
 use std::env;
 extern crate flate2;
 extern crate encoding;
+extern crate euclid;
 use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_16BE;
 use std::fmt;
@@ -213,11 +214,7 @@ fn filter_data(contents: &Stream) -> Vec<u8> {
     }
     data
 }
-struct TextState<'a>
-{
-    font: Option<PdfFont<'a>>,
-    size: f64
-}
+
 
 fn get_obj<'a>(doc: &'a Document, o: &Object) -> &'a Object
 {
@@ -243,22 +240,43 @@ fn maybe_get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Opt
     maybe_get_obj(doc, dict, key).and_then(|n| n.as_name()).map(|n| to_utf8(n))
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 struct PdfFont<'a> {
     font: &'a Dictionary,
-    doc: &'a Document
+    doc: &'a Document,
+    first_char: i64,
+    last_char: i64,
+    widths: Vec<f64>
 }
 
 
 impl<'a> PdfFont<'a> {
+    fn new(doc: &'a Document, font: &'a Dictionary) -> PdfFont<'a> {
+        let base_name = get_name(doc, font, "BaseFont");
+        println!("base_name {}", base_name);
+        let first_char = maybe_get_obj(doc, font, "FirstChar").and_then(|fc| fc.as_i64()).expect("missing FirstChar");
+        let last_char = maybe_get_obj(doc, font, "LastChar").and_then(|fc| fc.as_i64()).expect("missing LastChar");
+        let widths = maybe_get_obj(doc, font, "Widths").and_then(|widths| widths.as_array()).expect("Widths should be an array")
+                                                       .iter()
+                                                       .map(|width| as_num(width))
+                                                       .collect::<Vec<_>>();
+        PdfFont{doc, font, first_char, last_char, widths}
+    }
     fn get_encoding(&self) -> &'a Object {
         get_obj(self.doc, self.font.get("Encoding").unwrap())
     }
     fn get_type(&self) -> String {
         get_name(self.doc, self.font, "Type")
     }
+    fn get_basefont(&self) -> String {
+        get_name(self.doc, self.font, "BaseFont")
+    }
     fn get_subtype(&self) -> String {
         get_name(self.doc, self.font, "Subtype")
+    }
+
+    fn get_widths(&self) -> Option<&Vec<Object>> {
+        maybe_get_obj(self.doc, self.font, "Widths").map(|widths| widths.as_array().expect("Widths should be an array"))
     }
     /* For type1: This entry is obsolescent and its use is no longer recommended. (See
      * implementation note 42 in Appendix H.) */
@@ -301,10 +319,29 @@ impl<'a> fmt::Debug for PdfFontDescriptor<'a> {
     }
 }
 
+fn as_num(o: &Object) -> f64 {
+    match (o) {
+        &Object::Integer(i) => { i as f64 }
+        &Object::Real(f) => { f }
+        _ => { panic!("not a number") }
+    }
+}
+
+struct TextState<'a>
+{
+    font: Option<PdfFont<'a>>,
+    font_size: f64,
+    character_spacing: f64,
+    word_spacing: f64,
+    horizontal_scaling: f64
+}
+
 fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
     let data = contents.decompressed_content().unwrap();
     let content = Content::decode(&data).unwrap();
-    let mut ts = TextState { font: None, size:3. };
+    let mut ts = TextState { font: None, font_size:3., character_spacing: 0.,
+                             word_spacing: 0., horizontal_scaling: 100., };
+    let mut tm = euclid::Transform2D::identity();
     for operation in &content.operations {
         match operation.operator.as_ref() {
             "TJ" => {
@@ -313,10 +350,20 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
                         for e in array {
                             match e {
                                 &Object::String(ref s, StringFormat::Literal) => {
-                                    let font = ts.font.unwrap();
-                                    println!("{:?} {} {:?}", font.get_name(), font.get_subtype(), to_utf8(s));
+                                    for c in s {
+                                    }
+                                    let font = ts.font.as_ref().unwrap();
+                                    println!("{:?} {} {:?}", font.get_basefont(), font.get_subtype(), to_utf8(s));
                                 }
-                                _ => {}
+                                &Object::Integer(i) => {
+                                    let w0 = 0.;
+                                    let tj = i as f64;
+                                    let ty = 0.;
+                                    let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
+                                    tm = tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+                                    println!("adjust text by: {} {:?}", i, tm);
+                                }
+                                _ => { println!("{:?}", e);}
                             }
                         }
                     }
@@ -332,19 +379,32 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
                 }
             }
             "Tf" => {
-                let font = PdfFont{doc: doc, font: get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap()};
-                let file = font.get_descriptor().and_then(|desc| desc.get_file());
-                if let Some(file) = file {
-                    let file_contents = filter_data(file.as_stream().unwrap());
-                    let mut cursor = Cursor::new(&file_contents[..]);
-                    //let f = Font::read(&mut cursor);
-                    //println!("font file: {:?}", f);
+                let font = PdfFont::new(doc, get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap());
+                {
+                    let file = font.get_descriptor().and_then(|desc| desc.get_file());
+                    if let Some(file) = file {
+                        let file_contents = filter_data(file.as_stream().unwrap());
+                        let mut cursor = Cursor::new(&file_contents[..]);
+                        //let f = Font::read(&mut cursor);
+                        //println!("font file: {:?}", f);
+                    }
                 }
                 ts.font = Some(font);
                 match operation.operands[1] {
-                    Object::Real(size) => { ts.size = size }
+                    Object::Real(size) => { ts.font_size = size }
                     _ => {}
                 }
+            }
+            "Tm" => {
+                assert!(operation.operands.len() == 6);
+                tm = euclid::Transform2D::row_major(as_num(&operation.operands[0]),
+                                                       as_num(&operation.operands[1]),
+                                                       as_num(&operation.operands[2]),
+                                                       as_num(&operation.operands[3]),
+                                                       as_num(&operation.operands[4]),
+                                                       as_num(&operation.operands[5]));
+                println!("matrix {:?}", tm);
+
             }
 
 

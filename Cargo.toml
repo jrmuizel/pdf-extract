@@ -1,11 +1,11 @@
 [package]
+authors = ["Jeff Muizelaar <jmuizelaar@mozilla.com>"]
 name = "jrmuizel-pdf-info"
 version = "0.1.0"
-authors = ["Jeff Muizelaar <jmuizelaar@mozilla.com>"]
 
 [dependencies]
 encoding = "0.2.33"
+euclid = "0.15.1"
 flate2 = "0.2.17"
-postscript = "0.11.1"
 lopdf = "0.9"
-
+postscript = "0.11.1"
