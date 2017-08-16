@@ -425,9 +425,10 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
                         for e in array {
                             match e {
                                 &Object::String(ref s, StringFormat::Literal) => {
-                                    for c in s {
-                                    }
                                     let font = ts.font.as_ref().unwrap();
+                                    for c in s {
+                                        println!("w: {}", font.widths[&(*c as i64)]);
+                                    }
                                     println!("{:?} {} {:?}", font.get_basefont(), font.get_subtype(), to_utf8(s));
                                 }
                                 &Object::Integer(i) => {
