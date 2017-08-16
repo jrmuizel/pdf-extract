@@ -14,6 +14,8 @@ use encoding::all::UTF_16BE;
 use std::fmt;
 use std::io::Cursor;
 use std::str;
+use std::collections::HashMap;
+mod metrics;
 
 fn get_info(doc: &Document) -> Option<&Dictionary> {
     match doc.trailer.get("Info") {
@@ -240,27 +242,101 @@ fn maybe_get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Opt
     maybe_get_obj(doc, dict, key).and_then(|n| n.as_name()).map(|n| to_utf8(n))
 }
 
+fn maybe_get_array<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<&'a Vec<Object>> {
+    maybe_get_obj(doc, dict, key).and_then(|n| n.as_array())
+}
+
+
 #[derive(Clone)]
 struct PdfFont<'a> {
     font: &'a Dictionary,
     doc: &'a Document,
-    first_char: i64,
+    widths: HashMap<i64, f64> // should probably just use i32 here
+    /*first_char: i64,
     last_char: i64,
-    widths: Vec<f64>
+    widths: Vec<f64>*/
 }
 
 
 impl<'a> PdfFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfFont<'a> {
         let base_name = get_name(doc, font, "BaseFont");
-        println!("base_name {}", base_name);
-        let first_char = maybe_get_obj(doc, font, "FirstChar").and_then(|fc| fc.as_i64()).expect("missing FirstChar");
-        let last_char = maybe_get_obj(doc, font, "LastChar").and_then(|fc| fc.as_i64()).expect("missing LastChar");
-        let widths = maybe_get_obj(doc, font, "Widths").and_then(|widths| widths.as_array()).expect("Widths should be an array")
-                                                       .iter()
-                                                       .map(|width| as_num(width))
-                                                       .collect::<Vec<_>>();
-        PdfFont{doc, font, first_char, last_char, widths}
+        let subtype = get_name(doc, font, "Subtype");
+        println!("base_name {} {}", base_name, subtype);
+        if subtype == "Type0" {
+            return PdfFont::new_composite_font(doc, font);
+        }
+        let mut first_char;
+        let mut last_char;
+        let mut widths;
+        'outer : loop {
+            if base_name == "Times-Roman" {
+                for m in metrics::metrics() {
+                    if m.0 == base_name {
+                        first_char = m.1[0].0;
+                        last_char = m.1[m.1.len() - 1].0;
+                        widths = m.1.iter().map(|x| x.1 as f64).collect();
+                        // These are actually supposed to override
+                        assert!(maybe_get_obj(doc, font, "FirstChar").is_none());
+                        assert!(maybe_get_obj(doc, font, "LastChar").is_none());
+                        assert!(maybe_get_obj(doc, font, "Widths").is_none());
+                        break 'outer;
+                    }
+                }
+            }
+            first_char = maybe_get_obj(doc, font, "FirstChar").and_then(|fc| fc.as_i64()).expect("missing FirstChar");
+            last_char = maybe_get_obj(doc, font, "LastChar").and_then(|fc| fc.as_i64()).expect("missing LastChar");
+            widths = maybe_get_obj(doc, font, "Widths").and_then(|widths| widths.as_array()).expect("Widths should be an array")
+                .iter()
+                .map(|width| as_num(width))
+                .collect::<Vec<_>>();
+            break;
+        }
+        let mut width_map = HashMap::new();
+        let mut i = 0;
+        for w in widths {
+            width_map.insert((first_char + i), w);
+            i += 1;
+        }
+        assert_eq!(first_char + i - 1, last_char);
+
+        PdfFont{doc, font, widths: width_map}
+    }
+    fn new_composite_font(doc: &'a Document, font: &'a Dictionary) -> PdfFont<'a> {
+        let descendants = maybe_get_array(doc, font, "DescendantFonts").expect("Descendant fonts required");
+        let ciddict = maybe_deref(doc, &descendants[0]).as_dict().expect("should be CID dict");
+        let encoding = maybe_get_array(doc, font, "Encoding");
+        if (encoding.is_none()) {
+            println!("Encoding required in type0 fonts");
+        }
+        println!("descendents {:?} {:?}", descendants, ciddict);
+
+        let font_dict = maybe_get_obj(doc, ciddict, "FontDescriptor").expect("required");
+        println!("{:?}", font_dict);
+        let f = font_dict.as_dict().expect("must be dict");
+        let w = maybe_get_array(doc, ciddict, "W").expect("widths");
+        let mut widths = HashMap::new();
+        let mut i = 0;
+        while i < w.len() {
+            if let Object::Array(ref wa) = w[i+1] {
+                let cid = w[i].as_i64().expect("id should be num");
+                let j = 0;
+                println!("wa: {:?}", wa);
+                for w in wa {
+                    widths.insert(cid + j, as_num(w) );
+                }
+                i += 2;
+            } else {
+                let c_first = w[i].as_i64().expect("first should be num");
+                let c_last = w[i].as_i64().expect("last should be num");
+                let c_width = as_num(&w[i]);
+                for id in c_first..c_last {
+                    widths.insert(id, c_width);
+                }
+                i += 3;
+            }
+        }
+        PdfFont{doc, font, widths}
     }
     fn get_encoding(&self) -> &'a Object {
         get_obj(self.doc, self.font.get("Encoding").unwrap())
@@ -274,7 +350,6 @@ impl<'a> PdfFont<'a> {
     fn get_subtype(&self) -> String {
         get_name(self.doc, self.font, "Subtype")
     }
-
     fn get_widths(&self) -> Option<&Vec<Object>> {
         maybe_get_obj(self.doc, self.font, "Widths").map(|widths| widths.as_array().expect("Widths should be an array"))
     }
