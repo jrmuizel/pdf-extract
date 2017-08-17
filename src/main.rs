@@ -408,17 +408,31 @@ struct TextState<'a>
     font_size: f64,
     character_spacing: f64,
     word_spacing: f64,
-    horizontal_scaling: f64
+    horizontal_scaling: f64,
+    rise: f64
 }
 
 fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
     let data = contents.decompressed_content().unwrap();
+    println!("contents {}", to_utf8(&data));
     let content = Content::decode(&data).unwrap();
-    let mut ts = TextState { font: None, font_size:3., character_spacing: 0.,
-                             word_spacing: 0., horizontal_scaling: 100., };
+    let mut ts = TextState { font: None, font_size: std::f64::NAN, character_spacing: 0.,
+                             word_spacing: 0., horizontal_scaling: 100. / 100., rise: 0.};
+    let mut ctm = euclid::Transform2D::identity();
     let mut tm = euclid::Transform2D::identity();
+    let mut tlm = euclid::Transform2D::identity();
     for operation in &content.operations {
         match operation.operator.as_ref() {
+            "cm" => {
+                assert!(operation.operands.len() == 6);
+                ctm = euclid::Transform2D::row_major(as_num(&operation.operands[0]),
+                                                     as_num(&operation.operands[1]),
+                                                     as_num(&operation.operands[2]),
+                                                     as_num(&operation.operands[3]),
+                                                     as_num(&operation.operands[4]),
+                                                     as_num(&operation.operands[5]));
+                println!("matrix {:?}", ctm);
+            }
             "TJ" => {
                 match operation.operands[0] {
                     Object::Array(ref array) => {
@@ -427,7 +441,27 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
                                 &Object::String(ref s, StringFormat::Literal) => {
                                     let font = ts.font.as_ref().unwrap();
                                     for c in s {
+                                        let tsm = euclid::Transform2D::row_major(ts.font_size * ts.horizontal_scaling,
+                                                                                 0.,
+                                                                                 0.,
+                                                                                 ts.horizontal_scaling,
+                                                                                 0.,
+                                                                                 ts.rise);
+                                        let trm = tm.pre_mul(&ctm);
+                                        println!("current pos: {:?}", trm);
+                                        let slice = [*c];
+                                        eprintln!("<div style='position: absolute; left: {}px; top: {}px'>{}</div>",
+                                                  trm.m31, trm.m32, to_utf8(&slice));
                                         println!("w: {}", font.widths[&(*c as i64)]);
+                                        let w0 = font.widths[&(*c as i64)] / 1000.;
+                                        let tj = 0.;
+                                        let ty = 0.;
+                                        let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
+                                        println!("w0: {}, tx: {}", w0, tx);
+                                        tm = tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+                                        let trm = tm.pre_mul(&ctm);
+                                        println!("post pos: {:?}", trm);
+
                                     }
                                     println!("{:?} {} {:?}", font.get_basefont(), font.get_subtype(), to_utf8(s));
                                 }
@@ -454,6 +488,12 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
                     _ => {}
                 }
             }
+            "Ts" => {
+                ts.rise = as_num(&operation.operands[0]);
+            }
+            "Tz" => {
+                ts.horizontal_scaling = as_num(&operation.operands[0]) / 100.;
+            }
             "Tf" => {
                 let font = PdfFont::new(doc, get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap());
                 {
@@ -466,20 +506,34 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
                     }
                 }
                 ts.font = Some(font);
-                match operation.operands[1] {
-                    Object::Real(size) => { ts.font_size = size }
-                    _ => {}
-                }
+                ts.font_size = as_num(&operation.operands[1]);
+                println!("font size: {}", ts.font_size);
             }
             "Tm" => {
                 assert!(operation.operands.len() == 6);
-                tm = euclid::Transform2D::row_major(as_num(&operation.operands[0]),
+                tlm = euclid::Transform2D::row_major(as_num(&operation.operands[0]),
                                                        as_num(&operation.operands[1]),
                                                        as_num(&operation.operands[2]),
                                                        as_num(&operation.operands[3]),
                                                        as_num(&operation.operands[4]),
                                                        as_num(&operation.operands[5]));
-                println!("matrix {:?}", tm);
+                tm = tlm;
+                println!("Tm: matrix {:?}", tm);
+
+            }
+            "Td" => {
+                /* Move to the start of the next line, offset from the start of the current line by (tx , ty ).
+                   tx and ty are numbers expressed in unscaled text space units.
+                   More precisely, this operator performs the following assignments:
+                 */
+                assert!(operation.operands.len() == 2);
+                let tx = as_num(&operation.operands[0]);
+                let ty = as_num(&operation.operands[1]);
+                println!("translation: {} {}", tx, ty);
+
+                tlm = tlm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+                tm = tlm;
+                println!("Td matrix {:?}", tm);
 
             }
 
@@ -519,6 +573,7 @@ fn main() {
                 match doc.get_object(*id).unwrap() {
                     &Object::Stream(ref contents) => {
                         process_stream(&doc, contents, font);
+                        return;
                     }
                     _ => {}
                 }
@@ -529,6 +584,7 @@ fn main() {
                     match doc.get_object(id).unwrap() {
                         &Object::Stream(ref contents) => {
                             process_stream(&doc, contents, font);
+                            return;
                         }
                         _ => {}
                     }
