@@ -16,6 +16,8 @@ use std::io::Cursor;
 use std::str;
 use std::collections::HashMap;
 mod metrics;
+mod glyphnames;
+mod encodings;
 
 fn get_info(doc: &Document) -> Option<&Dictionary> {
     match doc.trailer.get("Info") {
@@ -89,13 +91,24 @@ const PDFDocEncoding: &'static [u16] = &[
     0x00f3, 0x00f4, 0x00f5, 0x00f6, 0x00f7, 0x00f8, 0x00f9, 0x00fa, 0x00fb,
     0x00fc, 0x00fd, 0x00fe, 0x00ff];
 
-fn to_utf8(s: &[u8]) -> String {
+fn pdf_to_utf8(s: &[u8]) -> String {
     if s.len() > 2 && s[0] == 0xfe && s[1] == 0xff {
         return UTF_16BE.decode(&s[2..], DecoderTrap::Strict).unwrap()
     } else {
         let r : Vec<u8> = s.iter().map(|x| *x).flat_map(|x| {
                let k = PDFDocEncoding[x as usize];
                vec![(k>>8) as u8, k as u8].into_iter()}).collect();
+        return UTF_16BE.decode(&r, DecoderTrap::Strict).unwrap()
+    }
+}
+
+fn to_utf8(encoding: &[u16], s: &[u8]) -> String {
+    if s.len() > 2 && s[0] == 0xfe && s[1] == 0xff {
+        return UTF_16BE.decode(&s[2..], DecoderTrap::Strict).unwrap()
+    } else {
+        let r : Vec<u8> = s.iter().map(|x| *x).flat_map(|x| {
+            let k = encoding[x as usize];
+            vec![(k>>8) as u8, k as u8].into_iter()}).collect();
         return UTF_16BE.decode(&r, DecoderTrap::Strict).unwrap()
     }
 }
@@ -116,6 +129,7 @@ impl<'a> Pages<'a> {
                 Some(&Object::Dictionary(ref pages)) => { pages }
                 _ => { panic!() }
             };
+
         loop {
             let kids = parent.get("Kids").and_then(|x| x.as_array()).unwrap();
             let child_id = kids[0].as_reference().unwrap();
@@ -235,11 +249,11 @@ fn maybe_get_obj<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Opti
 }
 
 fn get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> String {
-    to_utf8(dict.get(key).map(|o| maybe_deref(doc, o)).unwrap().as_name().unwrap())
+    pdf_to_utf8(dict.get(key).map(|o| maybe_deref(doc, o)).unwrap().as_name().unwrap())
 }
 
 fn maybe_get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<String> {
-    maybe_get_obj(doc, dict, key).and_then(|n| n.as_name()).map(|n| to_utf8(n))
+    maybe_get_obj(doc, dict, key).and_then(|n| n.as_name()).map(|n| pdf_to_utf8(n))
 }
 
 fn maybe_get_array<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<&'a Vec<Object>> {
@@ -251,20 +265,64 @@ fn maybe_get_array<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Op
 struct PdfFont<'a> {
     font: &'a Dictionary,
     doc: &'a Document,
+    encoding: Option<Vec<u16>>,
     widths: HashMap<i64, f64> // should probably just use i32 here
     /*first_char: i64,
     last_char: i64,
     widths: Vec<f64>*/
 }
 
-
 impl<'a> PdfFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfFont<'a> {
         let base_name = get_name(doc, font, "BaseFont");
         let subtype = get_name(doc, font, "Subtype");
-        println!("base_name {} {}", base_name, subtype);
+        let encoding = maybe_get_obj(doc, font, "Encoding");
+        println!("base_name {} {} {:?}", base_name, subtype, font);
         if subtype == "Type0" {
             return PdfFont::new_composite_font(doc, font);
+        }
+        let mut encoding_table = None;
+        if let Some(encoding) = encoding {
+            if let &Object::Name(ref encoding_name) = encoding {
+                //encoding_table = Some(Vec::from(
+                let encoding = match &encoding_name[..] {
+                    b"MacRomanEncoding" => encodings::MAC_ROMAN_ENCODING,
+                    b"MacExpertEncoding" => encodings::MAC_EXPERT_ENCODING,
+                    b"WinAnsiEncoding" => encodings::WIN_ANSI_ENCODING,
+                    _ => panic!("unexpected encoding {:?}", pdf_to_utf8(encoding_name))
+                };
+                encoding_table = Some(encoding.iter()
+                    .map(|x| if let &Some(x) = x { glyphnames::name_to_unicode(x).unwrap() } else { 0 })
+                    .collect());
+
+            } else {
+                let encoding = encoding.as_dict().unwrap();
+                println!("Encoding {:?}", encoding);
+                if let Some(base_encoding) = maybe_get_obj(doc, encoding, "BaseEncoding") {
+                    panic!("BaseEncoding {:?}", base_encoding);
+                }
+                let mut table = Vec::from(PDFDocEncoding);
+                let differences = maybe_get_array(doc, encoding, "Differences");
+                if let Some(differences) = differences {
+                    let mut code = 0;
+                    for o in differences {
+                        match o {
+                            &Object::Integer(i) => { code = i; },
+                            &Object::Name(ref n) => {
+                                let name = pdf_to_utf8(&n);
+                                let unicode = glyphnames::name_to_unicode(&name).unwrap();
+                                table[code as usize] = unicode;
+                                println!("{} = {} {:?}", code, name, unicode);
+                                code += 1;
+                            }
+                            _ => { panic!("wrong type"); }
+                        }
+                    }
+                }
+                encoding_table = Some(table);
+                let name = pdf_to_utf8(encoding.get("Type").unwrap().as_name().unwrap());
+                println!("name: {}", name);
+            }
         }
 
         let mut width_map = HashMap::new();
@@ -300,7 +358,7 @@ impl<'a> PdfFont<'a> {
         }
 
 
-        PdfFont{doc, font, widths: width_map}
+        PdfFont{doc, font, widths: width_map, encoding: encoding_table}
     }
     fn new_composite_font(doc: &'a Document, font: &'a Dictionary) -> PdfFont<'a> {
         let descendants = maybe_get_array(doc, font, "DescendantFonts").expect("Descendant fonts required");
@@ -336,7 +394,7 @@ impl<'a> PdfFont<'a> {
                 i += 3;
             }
         }
-        PdfFont{doc, font, widths}
+        PdfFont{doc, font, widths, encoding: None}
     }
     fn get_encoding(&self) -> &'a Object {
         get_obj(self.doc, self.font.get("Encoding").unwrap())
@@ -384,7 +442,7 @@ impl<'a> PdfFontDescriptor<'a> {
         maybe_get_obj(self.doc, self.desc, "FontFile")
     }
     fn get_name(&self) -> String {
-        to_utf8(get_obj(self.doc, self.desc.get("Name").unwrap()).as_name().unwrap())
+        pdf_to_utf8(get_obj(self.doc, self.desc.get("Name").unwrap()).as_name().unwrap())
     }
 }
 
@@ -412,15 +470,17 @@ struct TextState<'a>
     rise: f64
 }
 
-fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
+fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_box: (f64, f64, f64, f64)) {
     let data = contents.decompressed_content().unwrap();
-    println!("contents {}", to_utf8(&data));
+    println!("contents {}", pdf_to_utf8(&data));
     let content = Content::decode(&data).unwrap();
     let mut ts = TextState { font: None, font_size: std::f64::NAN, character_spacing: 0.,
                              word_spacing: 0., horizontal_scaling: 100. / 100., rise: 0.};
     let mut ctm = euclid::Transform2D::identity();
     let mut tm = euclid::Transform2D::identity();
     let mut tlm = euclid::Transform2D::identity();
+    let mut flip_ctm = euclid::Transform2D::row_major(1., 0., 0., -1., 0., 2.*(media_box.3 - media_box.1));
+    println!("MediaBox {:?}", media_box);
     for operation in &content.operations {
         match operation.operator.as_ref() {
             "cm" => {
@@ -439,7 +499,10 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
                         for e in array {
                             match e {
                                 &Object::String(ref s, StringFormat::Literal) => {
+
                                     let font = ts.font.as_ref().unwrap();
+                                    let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
+
                                     for c in s {
                                         let tsm = euclid::Transform2D::row_major(ts.font_size * ts.horizontal_scaling,
                                                                                  0.,
@@ -448,22 +511,23 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
                                                                                  0.,
                                                                                  ts.rise);
                                         let trm = tm.pre_mul(&ctm);
-                                        println!("current pos: {:?}", trm);
+                                        let position = trm.post_mul(&flip_ctm);
+                                        //println!("current pos: {:?}", position);
                                         let slice = [*c];
-                                        eprintln!("<div style='position: absolute; left: {}px; top: {}px'>{}</div>",
-                                                  trm.m31, trm.m32, to_utf8(&slice));
-                                        println!("w: {}", font.widths[&(*c as i64)]);
+                                        eprintln!("<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
+                                                  position.m31, position.m32, ts.font_size, to_utf8(encoding, &slice));
+                                        //println!("w: {}", font.widths[&(*c as i64)]);
                                         let w0 = font.widths[&(*c as i64)] / 1000.;
                                         let tj = 0.;
                                         let ty = 0.;
                                         let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
-                                        println!("w0: {}, tx: {}", w0, tx);
+                                       // println!("w0: {}, tx: {}", w0, tx);
                                         tm = tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
                                         let trm = tm.pre_mul(&ctm);
-                                        println!("post pos: {:?}", trm);
+                                        //println!("post pos: {:?}", trm);
 
                                     }
-                                    println!("{:?} {} {:?}", font.get_basefont(), font.get_subtype(), to_utf8(s));
+                                    println!("{:?} {} {:?}", font.get_basefont(), font.get_subtype(), to_utf8(encoding, s));
                                 }
                                 &Object::Integer(i) => {
                                     let w0 = 0.;
@@ -483,7 +547,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary) {
             "Tj" => {
                 match operation.operands[0] {
                     Object::String(ref s, StringFormat::Literal) => {
-                        println!("{:?}", to_utf8(s));
+                        println!("{:?}", pdf_to_utf8(s));
                     }
                     _ => {}
                 }
@@ -552,7 +616,7 @@ fn main() {
     if let Some(ref info) = get_info(&doc) {
         for (k, v) in *info {
             match v {
-                &Object::String(ref s, StringFormat::Literal) => { println!("{}: {}", k, to_utf8(s)); }
+                &Object::String(ref s, StringFormat::Literal) => { println!("{}: {}", k, pdf_to_utf8(s)); }
                 _ => {}
             }
         }
@@ -567,14 +631,21 @@ fn main() {
         let font = resources.get("Font").unwrap().as_dict().unwrap();
         println!("font {:?}", font);
 
+        // pdfium searches up the page tree for MediaBoxes as needed
+        let media_box = maybe_get_array(&doc, dict,"MediaBox")
+            .expect("Should have been a MediaBox")
+            .iter()
+            .map(|x| as_num(x)).collect::<Vec<_>>();
+        let media_box = (media_box[0], media_box[1], media_box[2], media_box[3]);
+
         // Contents can point to either an array of references or a single reference
         match dict.get("Contents") {
             Some(&Object::Reference(ref id)) => {
                 match doc.get_object(*id).unwrap() {
                     &Object::Stream(ref contents) => {
-                        process_stream(&doc, contents, font);
-                        return;
+                        process_stream(&doc, contents, font, media_box);
                     }
+
                     _ => {}
                 }
             }
@@ -583,8 +654,7 @@ fn main() {
                     let id = id.as_reference().unwrap();
                     match doc.get_object(id).unwrap() {
                         &Object::Stream(ref contents) => {
-                            process_stream(&doc, contents, font);
-                            return;
+                            process_stream(&doc, contents, font, media_box);
                         }
                         _ => {}
                     }
