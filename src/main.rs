@@ -12,8 +12,10 @@ extern crate euclid;
 use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_16BE;
 use std::fmt;
-use std::io::Cursor;
+use std::path::{Path, PathBuf};
+use std::io::{Cursor, Write};
 use std::str;
+use std::fs::File;
 use std::collections::HashMap;
 mod metrics;
 mod glyphnames;
@@ -267,9 +269,6 @@ struct PdfFont<'a> {
     doc: &'a Document,
     encoding: Option<Vec<u16>>,
     widths: HashMap<i64, f64> // should probably just use i32 here
-    /*first_char: i64,
-    last_char: i64,
-    widths: Vec<f64>*/
 }
 
 impl<'a> PdfFont<'a> {
@@ -312,7 +311,6 @@ impl<'a> PdfFont<'a> {
                                 let name = pdf_to_utf8(&n);
                                 let unicode = glyphnames::name_to_unicode(&name).unwrap();
                                 table[code as usize] = unicode;
-                                println!("{} = {} {:?}", code, name, unicode);
                                 code += 1;
                             }
                             _ => { panic!("wrong type"); }
@@ -470,7 +468,7 @@ struct TextState<'a>
     rise: f64
 }
 
-fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_box: (f64, f64, f64, f64)) {
+fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_box: (f64, f64, f64, f64), output: &mut File) {
     let data = contents.decompressed_content().unwrap();
     println!("contents {}", pdf_to_utf8(&data));
     let content = Content::decode(&data).unwrap();
@@ -479,6 +477,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
     let mut ctm = euclid::Transform2D::identity();
     let mut tm = euclid::Transform2D::identity();
     let mut tlm = euclid::Transform2D::identity();
+    write!(output, "<div style='position: relative; height: 100%'>");
     let mut flip_ctm = euclid::Transform2D::row_major(1., 0., 0., -1., 0., 2.*(media_box.3 - media_box.1));
     println!("MediaBox {:?}", media_box);
     for operation in &content.operations {
@@ -514,7 +513,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                                         let position = trm.post_mul(&flip_ctm);
                                         //println!("current pos: {:?}", position);
                                         let slice = [*c];
-                                        eprintln!("<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
+                                        write!(output, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
                                                   position.m31, position.m32, ts.font_size, to_utf8(encoding, &slice));
                                         //println!("w: {}", font.widths[&(*c as i64)]);
                                         let w0 = font.widths[&(*c as i64)] / 1000.;
@@ -605,13 +604,22 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
             _ => { println!("{:?}", operation);}
         }
     }
+    write!(output, "</div>");
+
 }
 
 
 fn main() {
     let file = env::args().nth(1).unwrap();
     println!("{}", file);
-    let doc = Document::load(file).unwrap();
+    let path = Path::new(&file);
+    let filename = path.file_name().expect("expected a filename");
+    let mut output_file = PathBuf::new();
+    output_file.push(filename);
+    output_file.set_extension("html");
+    let mut output_file = File::create(output_file).expect("could not create output");
+    write!(&mut output_file, "<meta charset='utf-8' /> ");
+    let doc = Document::load(path).unwrap();
     println!("Version: {}", doc.version);
     if let Some(ref info) = get_info(&doc) {
         for (k, v) in *info {
@@ -643,7 +651,7 @@ fn main() {
             Some(&Object::Reference(ref id)) => {
                 match doc.get_object(*id).unwrap() {
                     &Object::Stream(ref contents) => {
-                        process_stream(&doc, contents, font, media_box);
+                        process_stream(&doc, contents, font, media_box, &mut output_file);
                     }
 
                     _ => {}
@@ -654,7 +662,7 @@ fn main() {
                     let id = id.as_reference().unwrap();
                     match doc.get_object(id).unwrap() {
                         &Object::Stream(ref contents) => {
-                            process_stream(&doc, contents, font, media_box);
+                            process_stream(&doc, contents, font, media_box, &mut output_file);
                         }
                         _ => {}
                     }
