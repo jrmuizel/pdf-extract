@@ -5,6 +5,7 @@ use lopdf::content::Content;
 use lopdf::{Object, ObjectId, Stream};
 use lopdf::StringFormat;
 use lopdf::*;
+use std::fmt::Debug;
 use std::env;
 extern crate flate2;
 extern crate encoding;
@@ -262,23 +263,28 @@ fn maybe_get_array<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Op
     maybe_get_obj(doc, dict, key).and_then(|n| n.as_array())
 }
 
-
 #[derive(Clone)]
-struct PdfFont<'a> {
+struct PdfBasicFont<'a> {
     font: &'a Dictionary,
     doc: &'a Document,
     encoding: Option<Vec<u16>>,
-    widths: HashMap<i64, f64> // should probably just use i32 here
+    widths: HashMap<i64, f64>, // should probably just use i32 here
+    default_width: Option<f64>, // only used for CID fonts and we should probably brake out the different font types
 }
 
-impl<'a> PdfFont<'a> {
-    fn new(doc: &'a Document, font: &'a Dictionary) -> PdfFont<'a> {
+trait PdfFont : Debug {
+    fn get_width(&self, id: i64) -> f64;
+    fn decode(&self, chars: &[u8]) -> String;
+}
+
+impl<'a> PdfBasicFont<'a> {
+    fn new(doc: &'a Document, font: &'a Dictionary) -> PdfBasicFont<'a> {
         let base_name = get_name(doc, font, "BaseFont");
         let subtype = get_name(doc, font, "Subtype");
         let encoding = maybe_get_obj(doc, font, "Encoding");
         println!("base_name {} {} {:?}", base_name, subtype, font);
         if subtype == "Type0" {
-            return PdfFont::new_composite_font(doc, font);
+            return PdfBasicFont::new_composite_font(doc, font);
         }
         let mut encoding_table = None;
         if let Some(encoding) = encoding {
@@ -355,31 +361,39 @@ impl<'a> PdfFont<'a> {
             assert_eq!(first_char + i - 1, last_char);
         }
 
-
-        PdfFont{doc, font, widths: width_map, encoding: encoding_table}
+        PdfBasicFont{doc, font, widths: width_map, encoding: encoding_table, default_width: None}
     }
-    fn new_composite_font(doc: &'a Document, font: &'a Dictionary) -> PdfFont<'a> {
+    fn new_composite_font(doc: &'a Document, font: &'a Dictionary) -> PdfBasicFont<'a> {
         let descendants = maybe_get_array(doc, font, "DescendantFonts").expect("Descendant fonts required");
         let ciddict = maybe_deref(doc, &descendants[0]).as_dict().expect("should be CID dict");
-        let encoding = maybe_get_array(doc, font, "Encoding");
-        if (encoding.is_none()) {
+        let encoding = maybe_get_obj(doc, font, "Encoding").expect("Encoding required in type0 fonts");
+        /*if (encoding.is_none()) {
             println!("Encoding required in type0 fonts");
+        }*/
+        match encoding {
+            &Object::Name(ref name) => {
+                println!("encoding {:?}", pdf_to_utf8(name));
+            }
+            _ => {}
         }
         println!("descendents {:?} {:?}", descendants, ciddict);
 
         let font_dict = maybe_get_obj(doc, ciddict, "FontDescriptor").expect("required");
         println!("{:?}", font_dict);
         let f = font_dict.as_dict().expect("must be dict");
+        let default_width = maybe_get_obj(doc, ciddict, "DW").map(|x| x.as_i64().unwrap()).unwrap_or(1000);
         let w = maybe_get_array(doc, ciddict, "W").expect("widths");
+        println!("widths {:?}", w);
         let mut widths = HashMap::new();
         let mut i = 0;
         while i < w.len() {
             if let Object::Array(ref wa) = w[i+1] {
                 let cid = w[i].as_i64().expect("id should be num");
-                let j = 0;
-                println!("wa: {:?}", wa);
+                let mut j = 0;
+                println!("wa: {:?} -> {:?}", cid, wa);
                 for w in wa {
                     widths.insert(cid + j, as_num(w) );
+                    j += 1;
                 }
                 i += 2;
             } else {
@@ -392,7 +406,7 @@ impl<'a> PdfFont<'a> {
                 i += 3;
             }
         }
-        PdfFont{doc, font, widths, encoding: None}
+        PdfBasicFont{doc, font, widths, encoding: None, default_width: Some(default_width as f64) }
     }
     fn get_encoding(&self) -> &'a Object {
         get_obj(self.doc, self.font.get("Encoding").unwrap())
@@ -418,13 +432,34 @@ impl<'a> PdfFont<'a> {
     fn get_descriptor(&self) -> Option<PdfFontDescriptor> {
         maybe_get_obj(self.doc, self.font, "FontDescriptor").and_then(|desc| desc.as_dict()).map(|desc| PdfFontDescriptor{desc: desc, doc: self.doc})
     }
+
+
 }
 
-impl<'a> fmt::Debug for PdfFont<'a> {
+impl<'a> PdfFont for PdfBasicFont<'a> {
+    fn get_width(&self, id: i64) -> f64 {
+        let width = self.widths.get(&id);
+        if let Some(width) = width {
+            return *width;
+        } else {
+            println!("missing width for {} falling back to default_width", id);
+            return self.default_width.unwrap();
+        }
+    }
+    fn decode(&self, chars: &[u8]) -> String {
+        let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
+        to_utf8(encoding, chars)
+    }
+
+
+}
+
+impl<'a> fmt::Debug for PdfBasicFont<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.font.fmt(f)
     }
 }
+
 
 
 #[derive(Copy, Clone)]
@@ -432,8 +467,6 @@ struct PdfFontDescriptor<'a> {
     desc: &'a Dictionary,
     doc: &'a Document
 }
-
-
 
 impl<'a> PdfFontDescriptor<'a> {
     fn get_file(&self) -> Option<&'a Object> {
@@ -451,7 +484,7 @@ impl<'a> fmt::Debug for PdfFontDescriptor<'a> {
 }
 
 fn as_num(o: &Object) -> f64 {
-    match (o) {
+    match o {
         &Object::Integer(i) => { i as f64 }
         &Object::Real(f) => { f }
         _ => { panic!("not a number") }
@@ -460,7 +493,7 @@ fn as_num(o: &Object) -> f64 {
 
 struct TextState<'a>
 {
-    font: Option<PdfFont<'a>>,
+    font: Option<Box<PdfFont + 'a>>,
     font_size: f64,
     character_spacing: f64,
     word_spacing: f64,
@@ -470,7 +503,7 @@ struct TextState<'a>
 
 fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_box: (f64, f64, f64, f64), output: &mut File) {
     let data = contents.decompressed_content().unwrap();
-    println!("contents {}", pdf_to_utf8(&data));
+    //println!("contents {}", pdf_to_utf8(&data));
     let content = Content::decode(&data).unwrap();
     let mut ts = TextState { font: None, font_size: std::f64::NAN, character_spacing: 0.,
                              word_spacing: 0., horizontal_scaling: 100. / 100., rise: 0.};
@@ -497,10 +530,12 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                     Object::Array(ref array) => {
                         for e in array {
                             match e {
-                                &Object::String(ref s, StringFormat::Literal) => {
+                                &Object::String(ref s, _) => {
 
                                     let font = ts.font.as_ref().unwrap();
-                                    let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
+                                    //let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
+                                    println!("{:?} {:?}", font, font.decode(s));
+
 
                                     for c in s {
                                         let tsm = euclid::Transform2D::row_major(ts.font_size * ts.horizontal_scaling,
@@ -514,9 +549,9 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                                         //println!("current pos: {:?}", position);
                                         let slice = [*c];
                                         write!(output, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
-                                                  position.m31, position.m32, ts.font_size, to_utf8(encoding, &slice));
+                                                  position.m31, position.m32, ts.font_size, font.decode(&slice));
                                         //println!("w: {}", font.widths[&(*c as i64)]);
-                                        let w0 = font.widths[&(*c as i64)] / 1000.;
+                                        let w0 = font.get_width(*c as i64) / 1000.;
                                         let tj = 0.;
                                         let ty = 0.;
                                         let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
@@ -526,7 +561,6 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                                         //println!("post pos: {:?}", trm);
 
                                     }
-                                    println!("{:?} {} {:?}", font.get_basefont(), font.get_subtype(), to_utf8(encoding, s));
                                 }
                                 &Object::Integer(i) => {
                                     let w0 = 0.;
@@ -536,7 +570,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                                     tm = tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
                                     println!("adjust text by: {} {:?}", i, tm);
                                 }
-                                _ => { println!("{:?}", e);}
+                                _ => { println!("kind of {:?}", e);}
                             }
                         }
                     }
@@ -548,7 +582,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                     Object::String(ref s, StringFormat::Literal) => {
                         println!("{:?}", pdf_to_utf8(s));
                     }
-                    _ => {}
+                    _ => { panic!("unexpected Tj operand") }
                 }
             }
             "Ts" => {
@@ -558,17 +592,19 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                 ts.horizontal_scaling = as_num(&operation.operands[0]) / 100.;
             }
             "Tf" => {
-                let font = PdfFont::new(doc, get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap());
+                let font = PdfBasicFont::new(doc, get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap());
                 {
-                    let file = font.get_descriptor().and_then(|desc| desc.get_file());
+                    /*let file = font.get_descriptor().and_then(|desc| desc.get_file());
                     if let Some(file) = file {
                         let file_contents = filter_data(file.as_stream().unwrap());
                         let mut cursor = Cursor::new(&file_contents[..]);
                         //let f = Font::read(&mut cursor);
                         //println!("font file: {:?}", f);
-                    }
+                    }*/
                 }
+                let font = Box::new(font);
                 ts.font = Some(font);
+
                 ts.font_size = as_num(&operation.operands[1]);
                 println!("font size: {}", ts.font_size);
             }
@@ -599,9 +635,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                 println!("Td matrix {:?}", tm);
 
             }
-
-
-            _ => { println!("{:?}", operation);}
+            _ => { println!("unknown operation {:?}", operation);}
         }
     }
     write!(output, "</div>");
