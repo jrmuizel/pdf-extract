@@ -474,9 +474,9 @@ impl<'a> PdfCIDFont<'a> {
         let mut unicode_map = None;
         match to_unicode {
             &Object::Stream(ref stream) => {
-                let contents = stream.decompressed_content().unwrap();
+                let contents = get_contents(stream);
                 unicode_map = Some(adobe_cmap_parser::get_unicode_map(&contents).unwrap());
-                println!("Stream: {:?} {}", unicode_map, pdf_to_utf8(&stream.decompressed_content().unwrap()));
+                println!("Stream: {:?} {:?}", unicode_map, contents);
             }
             _ => { panic!("unsupported cmap")}
         }
@@ -595,8 +595,17 @@ struct TextState<'a>
     rise: f64
 }
 
+// XXX: We'd ideally implement this without having to copy the uncompressed data
+fn get_contents(contents: &Stream) -> Vec<u8> {
+    if contents.filter().is_some() {
+        contents.decompressed_content().unwrap()
+    } else {
+        contents.content.clone()
+    }
+}
+
 fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_box: (f64, f64, f64, f64), output: &mut File) {
-    let data = contents.decompressed_content().unwrap();
+    let data = get_contents(contents);
     //println!("contents {}", pdf_to_utf8(&data));
     let content = Content::decode(&data).unwrap();
     let mut ts = TextState { font: None, font_size: std::f64::NAN, character_spacing: 0.,
