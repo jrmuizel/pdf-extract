@@ -1,13 +1,9 @@
 extern crate lopdf;
-use lopdf::Document;
-use lopdf::Dictionary;
+
 use lopdf::content::Content;
-use lopdf::{Object, ObjectId, Stream};
-use lopdf::StringFormat;
 use lopdf::*;
 use std::fmt::Debug;
 use std::env;
-extern crate flate2;
 extern crate encoding;
 extern crate euclid;
 extern crate adobe_cmap_parser;
@@ -15,7 +11,7 @@ use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_16BE;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::io::{Cursor, Write};
+use std::io::Write;
 use std::str;
 use std::fs::File;
 use std::slice::Iter;
@@ -215,25 +211,6 @@ impl<'a> Iterator for Pages<'a> {
 fn get_type(o: &Dictionary) -> &str
 {
     o.type_name().unwrap()
-}
-
-fn filter_data(contents: &Stream) -> Vec<u8> {
-    use std::io::prelude::*;
-    use flate2::read::ZlibDecoder;
-
-    let mut data = Vec::new();
-    if let Some(filter) = contents.filter() {
-        match filter.as_str() {
-            "FlateDecode" => {
-                {
-                    let mut decoder = ZlibDecoder::new(contents.content.as_slice());
-                    decoder.read_to_end(&mut data).unwrap();
-                }
-            },
-                _ => { data = contents.content.clone(); }
-        }
-    }
-    data
 }
 
 
