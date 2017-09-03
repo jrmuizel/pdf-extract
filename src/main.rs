@@ -10,6 +10,7 @@ use std::env;
 extern crate flate2;
 extern crate encoding;
 extern crate euclid;
+extern crate adobe_cmap_parser;
 use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_16BE;
 use std::fmt;
@@ -17,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::io::{Cursor, Write};
 use std::str;
 use std::fs::File;
+use std::slice::Iter;
 use std::collections::HashMap;
 mod metrics;
 mod glyphnames;
@@ -272,20 +274,27 @@ struct PdfBasicFont<'a> {
     default_width: Option<f64>, // only used for CID fonts and we should probably brake out the different font types
 }
 
-trait PdfFont : Debug {
-    fn get_width(&self, id: i64) -> f64;
-    fn decode(&self, chars: &[u8]) -> String;
+
+
+
+fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Box<PdfFont + 'a> {
+    let subtype = get_name(doc, font, "Subtype");
+    println!("MakeFont({})", subtype);
+    if subtype == "Type0" {
+        Box::new(PdfCIDFont::new(doc, font))
+    } else {
+        Box::new(PdfBasicFont::new(doc, font))
+    }
 }
 
 impl<'a> PdfBasicFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfBasicFont<'a> {
         let base_name = get_name(doc, font, "BaseFont");
         let subtype = get_name(doc, font, "Subtype");
+
         let encoding = maybe_get_obj(doc, font, "Encoding");
         println!("base_name {} {} {:?}", base_name, subtype, font);
-        if subtype == "Type0" {
-            return PdfBasicFont::new_composite_font(doc, font);
-        }
+
         let mut encoding_table = None;
         if let Some(encoding) = encoding {
             if let &Object::Name(ref encoding_name) = encoding {
@@ -363,7 +372,111 @@ impl<'a> PdfBasicFont<'a> {
 
         PdfBasicFont{doc, font, widths: width_map, encoding: encoding_table, default_width: None}
     }
-    fn new_composite_font(doc: &'a Document, font: &'a Dictionary) -> PdfBasicFont<'a> {
+
+    fn get_encoding(&self) -> &'a Object {
+        get_obj(self.doc, self.font.get("Encoding").unwrap())
+    }
+    fn get_type(&self) -> String {
+        get_name(self.doc, self.font, "Type")
+    }
+    fn get_basefont(&self) -> String {
+        get_name(self.doc, self.font, "BaseFont")
+    }
+    fn get_subtype(&self) -> String {
+        get_name(self.doc, self.font, "Subtype")
+    }
+    fn get_widths(&self) -> Option<&Vec<Object>> {
+        maybe_get_obj(self.doc, self.font, "Widths").map(|widths| widths.as_array().expect("Widths should be an array"))
+    }
+    /* For type1: This entry is obsolescent and its use is no longer recommended. (See
+     * implementation note 42 in Appendix H.) */
+    fn get_name(&self) -> Option<String> {
+        maybe_get_name(self.doc, self.font, "Name")
+    }
+
+    fn get_descriptor(&self) -> Option<PdfFontDescriptor> {
+        maybe_get_obj(self.doc, self.font, "FontDescriptor").and_then(|desc| desc.as_dict()).map(|desc| PdfFontDescriptor{desc: desc, doc: self.doc})
+    }
+}
+
+type CharCode = u32;
+
+struct PdfFontIter<'a>
+{
+    i: Iter<'a, u8>,
+    font: &'a PdfFont,
+}
+
+impl<'a> Iterator for PdfFontIter<'a> {
+    type Item = CharCode;
+    fn next(&mut self) -> Option<CharCode> {
+        self.font.next_char(&mut self.i)
+    }
+}
+
+trait PdfFont : Debug {
+    fn get_width(&self, id: i64) -> f64;
+    fn decode(&self, chars: &[u8]) -> String;
+    fn next_char(&self, iter: &mut Iter<u8>) -> Option<CharCode>;
+    fn decode_char(&self, char: CharCode) -> String;
+
+        /*fn char_codes<'a>(&'a self, chars: &'a [u8]) -> PdfFontIter {
+            let p = self;
+            PdfFontIter{i: chars.iter(), font: p as &PdfFont}
+        }*/
+
+}
+
+impl<'a> PdfFont + 'a {
+    fn char_codes(&'a self, chars: &'a [u8]) -> PdfFontIter {
+        PdfFontIter{i: chars.iter(), font: self}
+    }
+}
+
+
+impl<'a> PdfFont for PdfBasicFont<'a> {
+    fn get_width(&self, id: i64) -> f64 {
+        let width = self.widths.get(&id);
+        if let Some(width) = width {
+            return *width;
+        } else {
+            println!("missing width for {} falling back to default_width", id);
+            return self.default_width.unwrap();
+        }
+    }
+    fn decode(&self, chars: &[u8]) -> String {
+        let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
+        to_utf8(encoding, chars)
+    }
+
+    fn next_char(&self, iter: &mut Iter<u8>) -> Option<CharCode> {
+        iter.next().map(|x| *x as CharCode)
+    }
+    fn decode_char(&self, char: CharCode) -> String {
+        let slice = [char as u8];
+        self.decode(&slice)
+    }
+}
+
+
+
+impl<'a> fmt::Debug for PdfBasicFont<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.font.fmt(f)
+    }
+}
+
+struct PdfCIDFont<'a> {
+    font: &'a Dictionary,
+    doc: &'a Document,
+    encoding: Option<Vec<u16>>,
+    to_unicode: Option<HashMap<u32, u32>>,
+    widths: HashMap<i64, f64>, // should probably just use i32 here
+    default_width: Option<f64>, // only used for CID fonts and we should probably brake out the different font types
+}
+
+impl<'a> PdfCIDFont<'a> {
+    fn new(doc: &'a Document, font: &'a Dictionary) -> PdfCIDFont<'a> {
         let descendants = maybe_get_array(doc, font, "DescendantFonts").expect("Descendant fonts required");
         let ciddict = maybe_deref(doc, &descendants[0]).as_dict().expect("should be CID dict");
         let encoding = maybe_get_obj(doc, font, "Encoding").expect("Encoding required in type0 fonts");
@@ -372,10 +485,25 @@ impl<'a> PdfBasicFont<'a> {
         }*/
         match encoding {
             &Object::Name(ref name) => {
-                println!("encoding {:?}", pdf_to_utf8(name));
+                let name = pdf_to_utf8(name);
+                assert!(name == "Identity-H");
+
+                println!("encoding {:?}", name);
             }
-            _ => {}
+            _ => { panic!("unsupported encoding")}
         }
+        let to_unicode = maybe_get_obj(doc, font, "ToUnicode").expect("ToUnicode missing (it's optional but nice to have");
+        println!("ToUnicode: {:?}", to_unicode);
+        let mut unicode_map = None;
+        match to_unicode {
+            &Object::Stream(ref stream) => {
+                let contents = stream.decompressed_content().unwrap();
+                unicode_map = Some(adobe_cmap_parser::get_unicode_map(&contents).unwrap());
+                println!("Stream: {:?} {}", unicode_map, pdf_to_utf8(&stream.decompressed_content().unwrap()));
+            }
+            _ => { panic!("unsupported cmap")}
+        }
+
         println!("descendents {:?} {:?}", descendants, ciddict);
 
         let font_dict = maybe_get_obj(doc, ciddict, "FontDescriptor").expect("required");
@@ -406,40 +534,15 @@ impl<'a> PdfBasicFont<'a> {
                 i += 3;
             }
         }
-        PdfBasicFont{doc, font, widths, encoding: None, default_width: Some(default_width as f64) }
+        PdfCIDFont{doc, font, widths, to_unicode: unicode_map, encoding: None, default_width: Some(default_width as f64) }
     }
-    fn get_encoding(&self) -> &'a Object {
-        get_obj(self.doc, self.font.get("Encoding").unwrap())
-    }
-    fn get_type(&self) -> String {
-        get_name(self.doc, self.font, "Type")
-    }
-    fn get_basefont(&self) -> String {
-        get_name(self.doc, self.font, "BaseFont")
-    }
-    fn get_subtype(&self) -> String {
-        get_name(self.doc, self.font, "Subtype")
-    }
-    fn get_widths(&self) -> Option<&Vec<Object>> {
-        maybe_get_obj(self.doc, self.font, "Widths").map(|widths| widths.as_array().expect("Widths should be an array"))
-    }
-    /* For type1: This entry is obsolescent and its use is no longer recommended. (See
-     * implementation note 42 in Appendix H.) */
-    fn get_name(&self) -> Option<String> {
-        maybe_get_name(self.doc, self.font, "Name")
-    }
-
-    fn get_descriptor(&self) -> Option<PdfFontDescriptor> {
-        maybe_get_obj(self.doc, self.font, "FontDescriptor").and_then(|desc| desc.as_dict()).map(|desc| PdfFontDescriptor{desc: desc, doc: self.doc})
-    }
-
-
 }
 
-impl<'a> PdfFont for PdfBasicFont<'a> {
+impl<'a> PdfFont for PdfCIDFont<'a> {
     fn get_width(&self, id: i64) -> f64 {
         let width = self.widths.get(&id);
         if let Some(width) = width {
+            println!("GetWidth {} -> {}", id, *width);
             return *width;
         } else {
             println!("missing width for {} falling back to default_width", id);
@@ -451,10 +554,24 @@ impl<'a> PdfFont for PdfBasicFont<'a> {
         to_utf8(encoding, chars)
     }
 
-
+    fn next_char(&self, iter: &mut Iter<u8>) -> Option<CharCode> {
+        let p = iter.next();
+        if let Some(&c) = p {
+            let next = *iter.next().unwrap();
+            Some(((c as u32) << 8)  | next as u32)
+        } else {
+            None
+        }
+    }
+    fn decode_char(&self, char: CharCode) -> String {
+        let s = self.to_unicode.as_ref().unwrap()[&char];
+        let s = [s as u16];
+        let s = String::from_utf16(&s).unwrap();
+        s
+    }
 }
 
-impl<'a> fmt::Debug for PdfBasicFont<'a> {
+impl<'a> fmt::Debug for PdfCIDFont<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.font.fmt(f)
     }
@@ -537,7 +654,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                                     println!("{:?} {:?}", font, font.decode(s));
 
 
-                                    for c in s {
+                                    for c in font.char_codes(s) {
                                         let tsm = euclid::Transform2D::row_major(ts.font_size * ts.horizontal_scaling,
                                                                                  0.,
                                                                                  0.,
@@ -547,11 +664,12 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                                         let trm = tm.pre_mul(&ctm);
                                         let position = trm.post_mul(&flip_ctm);
                                         //println!("current pos: {:?}", position);
-                                        let slice = [*c];
+
+                                        // 5.9 Extraction of Text Content
                                         write!(output, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
-                                                  position.m31, position.m32, ts.font_size, font.decode(&slice));
+                                                  position.m31, position.m32, ts.font_size, font.decode_char(c));
                                         //println!("w: {}", font.widths[&(*c as i64)]);
-                                        let w0 = font.get_width(*c as i64) / 1000.;
+                                        let w0 = font.get_width(c as i64) / 1000.;
                                         let tj = 0.;
                                         let ty = 0.;
                                         let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
@@ -592,7 +710,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                 ts.horizontal_scaling = as_num(&operation.operands[0]) / 100.;
             }
             "Tf" => {
-                let font = PdfBasicFont::new(doc, get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap());
+                let font = make_font(doc, get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap());
                 {
                     /*let file = font.get_descriptor().and_then(|desc| desc.get_file());
                     if let Some(file) = file {
@@ -602,7 +720,6 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                         //println!("font file: {:?}", f);
                     }*/
                 }
-                let font = Box::new(font);
                 ts.font = Some(font);
 
                 ts.font_size = as_num(&operation.operands[1]);
