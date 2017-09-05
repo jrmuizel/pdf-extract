@@ -454,12 +454,12 @@ struct PdfCIDFont<'a> {
 
 impl<'a> PdfCIDFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfCIDFont<'a> {
+        let base_name = get_name(doc, font, "BaseFont");
         let descendants = maybe_get_array(doc, font, "DescendantFonts").expect("Descendant fonts required");
         let ciddict = maybe_deref(doc, &descendants[0]).as_dict().expect("should be CID dict");
         let encoding = maybe_get_obj(doc, font, "Encoding").expect("Encoding required in type0 fonts");
-        /*if (encoding.is_none()) {
-            println!("Encoding required in type0 fonts");
-        }*/
+        println!("base_name {} {:?}", base_name, font);
+
         match encoding {
             &Object::Name(ref name) => {
                 let name = pdf_to_utf8(name);
@@ -469,6 +469,10 @@ impl<'a> PdfCIDFont<'a> {
             }
             _ => { panic!("unsupported encoding")}
         }
+
+        // Sometimes a Type0 font might refer to the same underlying data as regular font. In this case we may be able to extract some encoding
+        // data.
+        // We should also look inside the truetype data to see if there's a cmap table. It will help us convert as well.
         let to_unicode = maybe_get_obj(doc, font, "ToUnicode").expect("ToUnicode missing (it's optional but nice to have");
         println!("ToUnicode: {:?}", to_unicode);
         let mut unicode_map = None;
