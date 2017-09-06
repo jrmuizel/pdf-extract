@@ -288,7 +288,7 @@ impl<'a> PdfBasicFont<'a> {
 
             } else {
                 let encoding = encoding.as_dict().unwrap();
-                println!("Encoding {:?}", encoding);
+                //println!("Encoding {:?}", encoding);
                 if let Some(base_encoding) = maybe_get_obj(doc, encoding, "BaseEncoding") {
                     panic!("BaseEncoding {:?}", base_encoding);
                 }
@@ -608,7 +608,7 @@ fn get_contents(contents: &Stream) -> Vec<u8> {
     }
 }
 
-fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_box: (f64, f64, f64, f64), output: &mut File) {
+fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_box: (f64, f64, f64, f64), output: &mut File, page_num: u32) {
     let data = get_contents(contents);
     //println!("contents {}", pdf_to_utf8(&data));
     let content = Content::decode(&data).unwrap();
@@ -617,7 +617,6 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
     let mut ctm = euclid::Transform2D::identity();
     let mut tm = euclid::Transform2D::identity();
     let mut tlm = euclid::Transform2D::identity();
-    write!(output, "<div style='position: relative; height: 100%'>");
     let mut flip_ctm = euclid::Transform2D::row_major(1., 0., 0., -1., 0., 2.*(media_box.3 - media_box.1));
     println!("MediaBox {:?}", media_box);
     for operation in &content.operations {
@@ -773,8 +772,12 @@ fn main() {
     println!("Page count: {}", get_pages(&doc).get("Count").unwrap().as_i64().unwrap());
     println!("Pages: {:?}", get_pages(&doc));
     println!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
-    for dict in Pages::new(&doc) {
-        println!("page {:?}", dict);
+    let pages = doc.get_pages();
+    for dict in pages {
+        let page_num = dict.0;
+        let dict = doc.get_object(dict.1).unwrap().as_dict().unwrap();
+        println!("page {} {:?}", page_num, dict);
+        write!(&mut output_file, "<!-- page {} -->", page_num);
         let resources = maybe_deref(&doc, dict.get("Resources").unwrap()).as_dict().unwrap();
         println!("resources {:?}", resources);
         let font = resources.get("Font").unwrap().as_dict().unwrap();
@@ -786,13 +789,14 @@ fn main() {
             .iter()
             .map(|x| as_num(x)).collect::<Vec<_>>();
         let media_box = (media_box[0], media_box[1], media_box[2], media_box[3]);
+        write!(&mut output_file, "<div id='page{}' style='position: relative; height: {}px; width: {}px; border: 1px black solid'>", page_num, media_box.3 - media_box.1, media_box.2 - media_box.0);
 
         // Contents can point to either an array of references or a single reference
         match dict.get("Contents") {
             Some(&Object::Reference(ref id)) => {
                 match doc.get_object(*id).unwrap() {
                     &Object::Stream(ref contents) => {
-                        process_stream(&doc, contents, font, media_box, &mut output_file);
+                        process_stream(&doc, contents, font, media_box, &mut output_file, page_num);
                     }
 
                     _ => {}
@@ -803,7 +807,7 @@ fn main() {
                     let id = id.as_reference().unwrap();
                     match doc.get_object(id).unwrap() {
                         &Object::Stream(ref contents) => {
-                            process_stream(&doc, contents, font, media_box, &mut output_file);
+                            process_stream(&doc, contents, font, media_box, &mut output_file, page_num);
                         }
                         _ => {}
                     }
