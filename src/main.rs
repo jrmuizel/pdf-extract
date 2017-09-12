@@ -16,6 +16,7 @@ use std::str;
 use std::fs::File;
 use std::slice::Iter;
 use std::collections::HashMap;
+use std::rc::Rc;
 mod metrics;
 mod glyphnames;
 mod encodings;
@@ -162,13 +163,13 @@ struct PdfBasicFont<'a> {
 
 
 
-fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Box<PdfFont + 'a> {
+fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Rc<PdfFont + 'a> {
     let subtype = get_name(doc, font, "Subtype");
     println!("MakeFont({})", subtype);
     if subtype == "Type0" {
-        Box::new(PdfCIDFont::new(doc, font))
+        Rc::new(PdfCIDFont::new(doc, font))
     } else {
-        Box::new(PdfBasicFont::new(doc, font))
+        Rc::new(PdfBasicFont::new(doc, font))
     }
 }
 
@@ -497,14 +498,15 @@ fn as_num(o: &Object) -> f64 {
     }
 }
 
+#[derive(Clone)]
 struct TextState<'a>
 {
-    font: Option<Box<PdfFont + 'a>>,
+    font: Option<Rc<PdfFont + 'a>>,
     font_size: f64,
     character_spacing: f64,
     word_spacing: f64,
     horizontal_scaling: f64,
-    rise: f64
+    rise: f64,
 }
 
 // XXX: We'd ideally implement this without having to copy the uncompressed data
@@ -516,66 +518,82 @@ fn get_contents(contents: &Stream) -> Vec<u8> {
     }
 }
 
+#[derive(Clone)]
+struct GraphicsState<'a>
+{
+    ctm: euclid::Transform2D<f64>,
+    ts: TextState<'a>
+}
+
+fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
+             tm: &mut euclid::Transform2D<f64>,
+             tlm: &euclid::Transform2D<f64>,
+             flip_ctm: &euclid::Transform2D<f64>,output: &mut File ) {
+    let font = ts.font.as_ref().unwrap();
+    //let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
+    println!("{:?} {:?}", font, font.decode(s));
+
+
+    for c in font.char_codes(s) {
+        let tsm = euclid::Transform2D::row_major(ts.font_size * ts.horizontal_scaling,
+                                                 0.,
+                                                 0.,
+                                                 ts.horizontal_scaling,
+                                                 0.,
+                                                 ts.rise);
+        let trm = tm.pre_mul(&gs.ctm);
+        let position = trm.post_mul(&flip_ctm);
+        //println!("current pos: {:?}", position);
+
+        // 5.9 Extraction of Text Content
+        write!(output, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
+               position.m31, position.m32, ts.font_size, font.decode_char(c));
+        //println!("w: {}", font.widths[&(*c as i64)]);
+        let w0 = font.get_width(c as i64) / 1000.;
+        let tj = 0.;
+        let ty = 0.;
+        let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
+        // println!("w0: {}, tx: {}", w0, tx);
+        *tm = tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+        let trm = tm.pre_mul(&gs.ctm);
+        //println!("post pos: {:?}", trm);
+
+    }
+}
+
 fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_box: (f64, f64, f64, f64), output: &mut File, page_num: u32) {
     let data = get_contents(contents);
     //println!("contents {}", pdf_to_utf8(&data));
     let content = Content::decode(&data).unwrap();
-    let mut ts = TextState { font: None, font_size: std::f64::NAN, character_spacing: 0.,
-                             word_spacing: 0., horizontal_scaling: 100. / 100., rise: 0.};
-    let mut ctm = euclid::Transform2D::identity();
+    let mut gs : GraphicsState = GraphicsState{ts: TextState { font: None, font_size: std::f64::NAN, character_spacing: 0.,
+                             word_spacing: 0., horizontal_scaling: 100. / 100., rise: 0.},
+    ctm: euclid::Transform2D::identity()};
+    //let mut ts = &mut gs.ts;
+    let mut gs_stack = Vec::new();
     let mut tm = euclid::Transform2D::identity();
     let mut tlm = euclid::Transform2D::identity();
-    let mut flip_ctm = euclid::Transform2D::row_major(1., 0., 0., -1., 0., 2.*(media_box.3 - media_box.1));
+    let mut flip_ctm = euclid::Transform2D::row_major(1., 0., 0., -1., 0., (media_box.3 - media_box.1));
     println!("MediaBox {:?}", media_box);
     for operation in &content.operations {
         match operation.operator.as_ref() {
             "cm" => {
                 assert!(operation.operands.len() == 6);
-                ctm = euclid::Transform2D::row_major(as_num(&operation.operands[0]),
+                gs.ctm = euclid::Transform2D::row_major(as_num(&operation.operands[0]),
                                                      as_num(&operation.operands[1]),
                                                      as_num(&operation.operands[2]),
                                                      as_num(&operation.operands[3]),
                                                      as_num(&operation.operands[4]),
                                                      as_num(&operation.operands[5]));
-                println!("matrix {:?}", ctm);
+                println!("matrix {:?}", gs.ctm);
             }
             "TJ" => {
+                let mut ts = &gs.ts;
                 match operation.operands[0] {
                     Object::Array(ref array) => {
                         for e in array {
                             match e {
                                 &Object::String(ref s, _) => {
-
-                                    let font = ts.font.as_ref().unwrap();
-                                    //let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
-                                    println!("{:?} {:?}", font, font.decode(s));
-
-
-                                    for c in font.char_codes(s) {
-                                        let tsm = euclid::Transform2D::row_major(ts.font_size * ts.horizontal_scaling,
-                                                                                 0.,
-                                                                                 0.,
-                                                                                 ts.horizontal_scaling,
-                                                                                 0.,
-                                                                                 ts.rise);
-                                        let trm = tm.pre_mul(&ctm);
-                                        let position = trm.post_mul(&flip_ctm);
-                                        //println!("current pos: {:?}", position);
-
-                                        // 5.9 Extraction of Text Content
-                                        write!(output, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
-                                                  position.m31, position.m32, ts.font_size, font.decode_char(c));
-                                        //println!("w: {}", font.widths[&(*c as i64)]);
-                                        let w0 = font.get_width(c as i64) / 1000.;
-                                        let tj = 0.;
-                                        let ty = 0.;
-                                        let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
-                                       // println!("w0: {}, tx: {}", w0, tx);
-                                        tm = tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
-                                        let trm = tm.pre_mul(&ctm);
-                                        //println!("post pos: {:?}", trm);
-
-                                    }
+                                    show_text(&gs.ts, s, &gs, &mut tm, &tlm, &flip_ctm, output);
                                 }
                                 &Object::Integer(i) => {
                                     let w0 = 0.;
@@ -594,17 +612,17 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
             }
             "Tj" => {
                 match operation.operands[0] {
-                    Object::String(ref s, StringFormat::Literal) => {
-                        println!("{:?}", pdf_to_utf8(s));
+                    Object::String(ref s, _) => {
+                        show_text(&gs.ts, s, &gs, &mut tm, &tlm, &flip_ctm, output);
                     }
-                    _ => { panic!("unexpected Tj operand") }
+                    _ => { panic!("unexpected Tj operand {:?}", operation) }
                 }
             }
             "Ts" => {
-                ts.rise = as_num(&operation.operands[0]);
+                gs.ts.rise = as_num(&operation.operands[0]);
             }
             "Tz" => {
-                ts.horizontal_scaling = as_num(&operation.operands[0]) / 100.;
+                gs.ts.horizontal_scaling = as_num(&operation.operands[0]) / 100.;
             }
             "Tf" => {
                 let font = make_font(doc, get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap());
@@ -617,10 +635,10 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                         //println!("font file: {:?}", f);
                     }*/
                 }
-                ts.font = Some(font);
+                gs.ts.font = Some(font);
 
-                ts.font_size = as_num(&operation.operands[1]);
-                println!("font size: {}", ts.font_size);
+                gs.ts.font_size = as_num(&operation.operands[1]);
+                println!("font size: {}", gs.ts.font_size);
             }
             "Tm" => {
                 assert!(operation.operands.len() == 6);
@@ -649,6 +667,9 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                 println!("Td matrix {:?}", tm);
 
             }
+            "q" => { gs_stack.push(gs.clone()); }
+            "Q" => { gs = gs_stack.pop().unwrap(); }
+            "m" | "l" | "c" | "v" | "y" | "h" | "re" => { println!("unknown path construction operator {:?}", operation); }
             _ => { println!("unknown operation {:?}", operation);}
         }
     }
