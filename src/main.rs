@@ -156,6 +156,7 @@ struct PdfBasicFont<'a> {
     font: &'a Dictionary,
     doc: &'a Document,
     encoding: Option<Vec<u16>>,
+    unicode_map: Option<HashMap<u32, u32>>,
     widths: HashMap<i64, f64>, // should probably just use i32 here
     default_width: Option<f64>, // only used for CID fonts and we should probably brake out the different font types
 }
@@ -179,11 +180,14 @@ impl<'a> PdfBasicFont<'a> {
         let subtype = get_name(doc, font, "Subtype");
 
         let encoding = maybe_get_obj(doc, font, "Encoding");
-        println!("base_name {} {} {:?}", base_name, subtype, font);
+        println!("base_name {} {} enc:{:?}", base_name, subtype, encoding);
+
+        let unicode_map = get_unicode_map(doc, font);
 
         let mut encoding_table = None;
         if let Some(encoding) = encoding {
             if let &Object::Name(ref encoding_name) = encoding {
+                println!("encoding {:?}", pdf_to_utf8(encoding_name));
                 //encoding_table = Some(Vec::from(
                 let encoding = match &encoding_name[..] {
                     b"MacRomanEncoding" => encodings::MAC_ROMAN_ENCODING,
@@ -226,9 +230,9 @@ impl<'a> PdfBasicFont<'a> {
 
         let mut width_map = HashMap::new();
         if base_name == "Times-Roman" {
-            for m in metrics::metrics() {
-                if m.0 == base_name {
-                    for w in m.1 {
+            for font_metrics in metrics::metrics() {
+                if font_metrics.0 == base_name {
+                    for w in font_metrics.1 {
                         width_map.insert(w.0, w.1 as f64);
                     }
                     assert!(maybe_get_obj(doc, font, "FirstChar").is_none());
@@ -256,7 +260,7 @@ impl<'a> PdfBasicFont<'a> {
             assert_eq!(first_char + i - 1, last_char);
         }
 
-        PdfBasicFont{doc, font, widths: width_map, encoding: encoding_table, default_width: None}
+        PdfBasicFont{doc, font, widths: width_map, encoding: encoding_table, default_width: None, unicode_map}
     }
 
     fn get_encoding(&self) -> &'a Object {
@@ -302,7 +306,6 @@ impl<'a> Iterator for PdfFontIter<'a> {
 
 trait PdfFont : Debug {
     fn get_width(&self, id: i64) -> f64;
-    fn decode(&self, chars: &[u8]) -> String;
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<CharCode>;
     fn decode_char(&self, char: CharCode) -> String;
 
@@ -317,6 +320,11 @@ impl<'a> PdfFont + 'a {
     fn char_codes(&'a self, chars: &'a [u8]) -> PdfFontIter {
         PdfFontIter{i: chars.iter(), font: self}
     }
+    fn decode(&self, chars: &[u8]) -> String {
+        let strings = self.char_codes(chars).map(|x| self.decode_char(x)).collect::<Vec<_>>();
+        strings.join("")
+    }
+
 }
 
 
@@ -330,17 +338,28 @@ impl<'a> PdfFont for PdfBasicFont<'a> {
             return self.default_width.unwrap();
         }
     }
-    fn decode(&self, chars: &[u8]) -> String {
+    /*fn decode(&self, chars: &[u8]) -> String {
         let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
         to_utf8(encoding, chars)
-    }
+    }*/
 
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<CharCode> {
         iter.next().map(|x| *x as CharCode)
     }
     fn decode_char(&self, char: CharCode) -> String {
         let slice = [char as u8];
-        self.decode(&slice)
+        if let Some(ref unicode_map) = self.unicode_map {
+            let s = unicode_map.get(&char);
+            let s = match s {
+                None => { panic!("missing char {:?} in map {:?}", char, unicode_map)}
+                Some(s) => { *s }
+            };
+            let s = [s as u16];
+            let s = String::from_utf16(&s).unwrap();
+            return s
+        }
+        let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
+        to_utf8(encoding, &slice)
     }
 }
 
@@ -359,6 +378,22 @@ struct PdfCIDFont<'a> {
     to_unicode: Option<HashMap<u32, u32>>,
     widths: HashMap<i64, f64>, // should probably just use i32 here
     default_width: Option<f64>, // only used for CID fonts and we should probably brake out the different font types
+}
+
+fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMap<u32, u32>> {
+    let to_unicode = maybe_get_obj(doc, font, "ToUnicode");
+    //println!("ToUnicode: {:?}", to_unicode);
+    let mut unicode_map = None;
+    match to_unicode {
+        Some(&Object::Stream(ref stream)) => {
+            let contents = get_contents(stream);
+            unicode_map = Some(adobe_cmap_parser::get_unicode_map(&contents).unwrap());
+            println!("Stream: {:?} {:?}", unicode_map, contents);
+        }
+        None => { }
+        _ => { panic!("unsupported cmap")}
+    }
+    unicode_map
 }
 
 impl<'a> PdfCIDFont<'a> {
@@ -382,17 +417,9 @@ impl<'a> PdfCIDFont<'a> {
         // Sometimes a Type0 font might refer to the same underlying data as regular font. In this case we may be able to extract some encoding
         // data.
         // We should also look inside the truetype data to see if there's a cmap table. It will help us convert as well.
-        let to_unicode = maybe_get_obj(doc, font, "ToUnicode").expect("ToUnicode missing (it's optional but nice to have");
-        println!("ToUnicode: {:?}", to_unicode);
-        let mut unicode_map = None;
-        match to_unicode {
-            &Object::Stream(ref stream) => {
-                let contents = get_contents(stream);
-                unicode_map = Some(adobe_cmap_parser::get_unicode_map(&contents).unwrap());
-                println!("Stream: {:?} {:?}", unicode_map, contents);
-            }
-            _ => { panic!("unsupported cmap")}
-        }
+        // This won't work if the cmap has been subsetted. A better approach might be to hash glyph contents and use that against
+        // a global library of glyph hashes
+        let unicode_map = get_unicode_map(doc, font);
 
         println!("descendents {:?} {:?}", descendants, ciddict);
 
@@ -438,11 +465,15 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
             println!("missing width for {} falling back to default_width", id);
             return self.default_width.unwrap();
         }
-    }
+    }/*
     fn decode(&self, chars: &[u8]) -> String {
+        self.char_codes(chars);
+
+        //let utf16 = Vec::new();
+
         let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
         to_utf8(encoding, chars)
-    }
+    }*/
 
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<CharCode> {
         let p = iter.next();
@@ -531,7 +562,7 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
              flip_ctm: &euclid::Transform2D<f64>,output: &mut File ) {
     let font = ts.font.as_ref().unwrap();
     //let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
-    println!("{:?} {:?}", font, font.decode(s));
+    println!("{:?}", font.decode(s));
 
 
     for c in font.char_codes(s) {
@@ -543,7 +574,7 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
                                                  ts.rise);
         let trm = tm.pre_mul(&gs.ctm);
         let position = trm.post_mul(&flip_ctm);
-        //println!("current pos: {:?}", position);
+        println!("current pos: {:?}", position);
 
         // 5.9 Extraction of Text Content
         write!(output, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
@@ -576,6 +607,14 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
     println!("MediaBox {:?}", media_box);
     for operation in &content.operations {
         match operation.operator.as_ref() {
+            "BT" => {
+                tlm = euclid::Transform2D::identity();
+                tm = tlm;
+            }
+            "ET" => {
+                tlm = euclid::Transform2D::identity();
+                tm = tlm;
+            }
             "cm" => {
                 assert!(operation.operands.len() == 6);
                 gs.ctm = euclid::Transform2D::row_major(as_num(&operation.operands[0]),
@@ -596,6 +635,14 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                                     show_text(&gs.ts, s, &gs, &mut tm, &tlm, &flip_ctm, output);
                                 }
                                 &Object::Integer(i) => {
+                                    let w0 = 0.;
+                                    let tj = i as f64;
+                                    let ty = 0.;
+                                    let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
+                                    tm = tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+                                    println!("adjust text by: {} {:?}", i, tm);
+                                }
+                                &Object::Real(i) => {
                                     let w0 = 0.;
                                     let tj = i as f64;
                                     let ty = 0.;
@@ -669,6 +716,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
             }
             "q" => { gs_stack.push(gs.clone()); }
             "Q" => { gs = gs_stack.pop().unwrap(); }
+            "w" | "J" | "j" | "M" | "d" | "ri" | "i" | "gs" => { println!("unknown graphics state operator {:?}", operation); }
             "m" | "l" | "c" | "v" | "y" | "h" | "re" => { println!("unknown path construction operator {:?}", operation); }
             _ => { println!("unknown operation {:?}", operation);}
         }
