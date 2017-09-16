@@ -180,7 +180,28 @@ impl<'a> PdfBasicFont<'a> {
         let subtype = get_name(doc, font, "Subtype");
 
         let encoding = maybe_get_obj(doc, font, "Encoding");
-        println!("base_name {} {} enc:{:?}", base_name, subtype, encoding);
+        println!("base_name {} {} enc:{:?} {:?}", base_name, subtype, encoding, font);
+        let descriptor = maybe_get_obj(doc, font, "FontDescriptor").map(|x| x.as_dict());
+        if let Some(Some(descriptor)) = descriptor {
+            println!("descriptor {:?}", descriptor);
+            let file = maybe_get_obj(doc, descriptor, "FontFile");
+            if subtype == "Type1" {
+                match file {
+                    Some(&Object::Stream(ref s)) => {
+                        let s = get_contents(s);
+                        println!("font contents {:?}", pdf_to_utf8(&s))
+                    }
+                    _ => { println!("font file {:?}", file) }
+                }
+            }
+
+            let charset = maybe_get_obj(doc, descriptor, "CharSet");
+            let charset = match charset {
+                Some(&Object::String(ref s, _)) => { Some(pdf_to_utf8(&s)) }
+                _ => { None }
+            };
+            println!("charset {:?}", charset);
+        }
 
         let unicode_map = get_unicode_map(doc, font);
 
@@ -359,7 +380,9 @@ impl<'a> PdfFont for PdfBasicFont<'a> {
             return s
         }
         let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
-        to_utf8(encoding, &slice)
+        println!("char_code {:?} {:?}", char, self.encoding);
+        let s = to_utf8(encoding, &slice);
+        s
     }
 }
 
