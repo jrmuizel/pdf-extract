@@ -181,8 +181,8 @@ impl<'a> PdfBasicFont<'a> {
 
         let encoding = maybe_get_obj(doc, font, "Encoding");
         println!("base_name {} {} enc:{:?} {:?}", base_name, subtype, encoding, font);
-        let descriptor = maybe_get_obj(doc, font, "FontDescriptor").map(|x| x.as_dict());
-        if let Some(Some(descriptor)) = descriptor {
+        let descriptor = maybe_get_obj(doc, font, "FontDescriptor").and_then(|x| x.as_dict());
+        if let Some(descriptor) = descriptor {
             println!("descriptor {:?}", descriptor);
             let file = maybe_get_obj(doc, descriptor, "FontFile");
             if subtype == "Type1" {
