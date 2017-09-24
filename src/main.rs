@@ -54,11 +54,12 @@ fn get_pages(doc: &Document) -> &Dictionary {
         &Object::Reference(ref id) => {
             match doc.get_object(*id) {
                 Some(&Object::Dictionary(ref pages)) => { return pages; }
-                _ => {}
+                other => {println!("pages: {:?}", other)}
             }
         }
-        _ => {}
+        other => { println!("pages: {:?}", other)}
     }
+    println!("catalog {:?}", catalog);
     panic!();
 }
 
@@ -606,8 +607,7 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
     let font = ts.font.as_ref().unwrap();
     //let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
     println!("{:?}", font.decode(s));
-
-
+    
     for c in font.char_codes(s) {
         let tsm = euclid::Transform2D::row_major(ts.font_size * ts.horizontal_scaling,
                                                  0.,
@@ -617,6 +617,7 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
                                                  ts.rise);
         let trm = tm.pre_mul(&gs.ctm);
         let position = trm.post_mul(&flip_ctm);
+        //println!("ctm: {:?} tm {:?}", gs.ctm, tm);
         println!("current pos: {:?}", position);
 
         // 5.9 Extraction of Text Content
@@ -649,6 +650,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
     let mut flip_ctm = euclid::Transform2D::row_major(1., 0., 0., -1., 0., (media_box.3 - media_box.1));
     println!("MediaBox {:?}", media_box);
     for operation in &content.operations {
+        //println!("op: {:?}", operation);
         match operation.operator.as_ref() {
             "BT" => {
                 tlm = euclid::Transform2D::identity();
@@ -660,12 +662,13 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
             }
             "cm" => {
                 assert!(operation.operands.len() == 6);
-                gs.ctm = euclid::Transform2D::row_major(as_num(&operation.operands[0]),
-                                                     as_num(&operation.operands[1]),
-                                                     as_num(&operation.operands[2]),
-                                                     as_num(&operation.operands[3]),
-                                                     as_num(&operation.operands[4]),
-                                                     as_num(&operation.operands[5]));
+                let m = euclid::Transform2D::row_major(as_num(&operation.operands[0]),
+                                                       as_num(&operation.operands[1]),
+                                                       as_num(&operation.operands[2]),
+                                                       as_num(&operation.operands[3]),
+                                                       as_num(&operation.operands[4]),
+                                                       as_num(&operation.operands[5]));
+                gs.ctm = gs.ctm.pre_mul(&m);
                 println!("matrix {:?}", gs.ctm);
             }
             "TJ" => {
