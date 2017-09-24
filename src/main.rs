@@ -7,6 +7,7 @@ use std::env;
 extern crate encoding;
 extern crate euclid;
 extern crate adobe_cmap_parser;
+extern crate type1_encoding_parser;
 use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_16BE;
 use std::fmt;
@@ -182,6 +183,7 @@ impl<'a> PdfBasicFont<'a> {
         let encoding = maybe_get_obj(doc, font, "Encoding");
         println!("base_name {} {} enc:{:?} {:?}", base_name, subtype, encoding, font);
         let descriptor = maybe_get_obj(doc, font, "FontDescriptor").and_then(|x| x.as_dict());
+        let mut type1_encoding = None;
         if let Some(descriptor) = descriptor {
             println!("descriptor {:?}", descriptor);
             let file = maybe_get_obj(doc, descriptor, "FontFile");
@@ -189,7 +191,9 @@ impl<'a> PdfBasicFont<'a> {
                 match file {
                     Some(&Object::Stream(ref s)) => {
                         let s = get_contents(s);
-                        println!("font contents {:?}", pdf_to_utf8(&s))
+                        //println!("font contents {:?}", pdf_to_utf8(&s));
+                        type1_encoding = Some(type1_encoding_parser::get_encoding_map(&s).expect("encoding"));
+
                     }
                     _ => { println!("font file {:?}", file) }
                 }
@@ -243,9 +247,24 @@ impl<'a> PdfBasicFont<'a> {
                         }
                     }
                 }
-                encoding_table = Some(table);
                 let name = pdf_to_utf8(encoding.get("Type").unwrap().as_name().unwrap());
                 println!("name: {}", name);
+
+                encoding_table = Some(table);
+            }
+        } else {
+            if let Some(type1_encoding) = type1_encoding {
+                let mut table = Vec::from(PDFDocEncoding);
+                println!("type1encoding");
+                for (code, name) in type1_encoding {
+                    let unicode = glyphnames::name_to_unicode(&pdf_to_utf8(&name));
+                    if let Some(unicode) = unicode {
+                        table[code as usize] = unicode;
+                    } else {
+                        println!("unknown character {}", pdf_to_utf8(&name));
+                    }
+                }
+                encoding_table = Some(table)
             }
         }
 
@@ -380,7 +399,7 @@ impl<'a> PdfFont for PdfBasicFont<'a> {
             return s
         }
         let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
-        println!("char_code {:?} {:?}", char, self.encoding);
+        //println!("char_code {:?} {:?}", char, self.encoding);
         let s = to_utf8(encoding, &slice);
         s
     }
@@ -419,6 +438,7 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
     unicode_map
 }
 
+
 impl<'a> PdfCIDFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfCIDFont<'a> {
         let base_name = get_name(doc, font, "BaseFont");
@@ -449,7 +469,7 @@ impl<'a> PdfCIDFont<'a> {
         let font_dict = maybe_get_obj(doc, ciddict, "FontDescriptor").expect("required");
         println!("{:?}", font_dict);
         let f = font_dict.as_dict().expect("must be dict");
-        let default_width = maybe_get_obj(doc, ciddict, "DW").map(|x| x.as_i64().unwrap()).unwrap_or(1000);
+        let default_width = maybe_get_obj(doc, ciddict, "DW").and_then(|x| x.as_i64()).unwrap_or(1000);
         let w = maybe_get_array(doc, ciddict, "W").expect("widths");
         println!("widths {:?}", w);
         let mut widths = HashMap::new();
