@@ -205,7 +205,7 @@ impl<'a> PdfBasicFont<'a> {
                 Some(&Object::String(ref s, _)) => { Some(pdf_to_utf8(&s)) }
                 _ => { None }
             };
-            println!("charset {:?}", charset);
+            //println!("charset {:?}", charset);
         }
 
         let unicode_map = get_unicode_map(doc, font);
@@ -603,11 +603,12 @@ struct GraphicsState<'a>
 fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
              tm: &mut euclid::Transform2D<f64>,
              tlm: &euclid::Transform2D<f64>,
-             flip_ctm: &euclid::Transform2D<f64>,output: &mut File ) {
+             flip_ctm: &euclid::Transform2D<f64>,
+             output: &mut TextOutput ) {
     let font = ts.font.as_ref().unwrap();
     //let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
     println!("{:?}", font.decode(s));
-    
+
     for c in font.char_codes(s) {
         let tsm = euclid::Transform2D::row_major(ts.font_size * ts.horizontal_scaling,
                                                  0.,
@@ -619,10 +620,10 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
         let position = trm.post_mul(&flip_ctm);
         //println!("ctm: {:?} tm {:?}", gs.ctm, tm);
         println!("current pos: {:?}", position);
-
         // 5.9 Extraction of Text Content
-        write!(output, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
-               position.m31, position.m32, ts.font_size, font.decode_char(c));
+        output.output_character(position.m31, position.m32, ts.font_size, &font.decode_char(c));
+
+
         //println!("w: {}", font.widths[&(*c as i64)]);
         let w0 = font.get_width(c as i64) / 1000.;
         let tj = 0.;
@@ -636,7 +637,15 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
     }
 }
 
-fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_box: (f64, f64, f64, f64), output: &mut File, page_num: u32) {
+#[derive(Debug)]
+struct MediaBox {
+    llx: f64,
+    lly: f64,
+    urx: f64,
+    ury: f64
+}
+
+fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_box: &MediaBox, output: &mut TextOutput, page_num: u32) {
     let data = get_contents(contents);
     //println!("contents {}", pdf_to_utf8(&data));
     let content = Content::decode(&data).unwrap();
@@ -647,7 +656,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
     let mut gs_stack = Vec::new();
     let mut tm = euclid::Transform2D::identity();
     let mut tlm = euclid::Transform2D::identity();
-    let mut flip_ctm = euclid::Transform2D::row_major(1., 0., 0., -1., 0., (media_box.3 - media_box.1));
+    let mut flip_ctm = euclid::Transform2D::row_major(1., 0., 0., -1., 0., (media_box.ury - media_box.lly));
     println!("MediaBox {:?}", media_box);
     for operation in &content.operations {
         //println!("op: {:?}", operation);
@@ -767,10 +776,34 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
             _ => { println!("unknown operation {:?}", operation);}
         }
     }
-    write!(output, "</div>");
 
 }
 
+
+trait TextOutput {
+    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox);
+    fn end_page(&mut self);
+    fn output_character(&mut self, x: f64, y: f64, font_size: f64, char: &str);
+}
+
+
+struct HTMLOutput<'a>  {
+    file: &'a mut File
+}
+
+impl<'a> TextOutput for HTMLOutput<'a> {
+    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox) {
+        write!(self.file, "<!-- page {} -->", page_num);
+        write!(self.file, "<div id='page{}' style='position: relative; height: {}px; width: {}px; border: 1px black solid'>", page_num, media_box.ury - media_box.lly, media_box.urx - media_box.llx);
+    }
+    fn end_page(&mut self) {
+        write!(self.file, "</div>");
+    }
+    fn output_character(&mut self, x: f64, y: f64, font_size: f64, char: &str) {
+        write!(self.file, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
+               x, y, font_size, char);
+    }
+}
 
 fn main() {
     let file = env::args().nth(1).unwrap();
@@ -795,31 +828,37 @@ fn main() {
     println!("Page count: {}", get_pages(&doc).get("Count").unwrap().as_i64().unwrap());
     println!("Pages: {:?}", get_pages(&doc));
     println!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
+
+    let mut html_output = HTMLOutput{file: &mut output_file};
+    extract_text(&doc, &mut html_output);
+}
+
+
+fn extract_text(doc: &Document, output: &mut TextOutput) {
     let pages = doc.get_pages();
     for dict in pages {
         let page_num = dict.0;
         let dict = doc.get_object(dict.1).unwrap().as_dict().unwrap();
         println!("page {} {:?}", page_num, dict);
-        write!(&mut output_file, "<!-- page {} -->", page_num);
         let resources = maybe_deref(&doc, dict.get("Resources").unwrap()).as_dict().unwrap();
         println!("resources {:?}", resources);
         let font = resources.get("Font").unwrap().as_dict().unwrap();
         println!("font {:?}", font);
 
         // pdfium searches up the page tree for MediaBoxes as needed
-        let media_box = maybe_get_array(&doc, dict,"MediaBox")
+        let media_box = maybe_get_array(&doc, dict, "MediaBox")
             .expect("Should have been a MediaBox")
             .iter()
             .map(|x| as_num(x)).collect::<Vec<_>>();
-        let media_box = (media_box[0], media_box[1], media_box[2], media_box[3]);
-        write!(&mut output_file, "<div id='page{}' style='position: relative; height: {}px; width: {}px; border: 1px black solid'>", page_num, media_box.3 - media_box.1, media_box.2 - media_box.0);
+        let media_box = MediaBox{llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3]};
 
+        output.begin_page(page_num, &media_box);
         // Contents can point to either an array of references or a single reference
         match dict.get("Contents") {
             Some(&Object::Reference(ref id)) => {
                 match doc.get_object(*id).unwrap() {
                     &Object::Stream(ref contents) => {
-                        process_stream(&doc, contents, font, media_box, &mut output_file, page_num);
+                        process_stream(&doc, contents, font, &media_box, output, page_num);
                     }
 
                     _ => {}
@@ -830,7 +869,7 @@ fn main() {
                     let id = id.as_reference().unwrap();
                     match doc.get_object(id).unwrap() {
                         &Object::Stream(ref contents) => {
-                            process_stream(&doc, contents, font, media_box, &mut output_file, page_num);
+                            process_stream(&doc, contents, font, &media_box, output, page_num);
                         }
                         _ => {}
                     }
@@ -838,5 +877,6 @@ fn main() {
             }
             _ => {}
         }
+        output.end_page();
     }
 }
