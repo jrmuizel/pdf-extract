@@ -11,7 +11,8 @@ extern crate type1_encoding_parser;
 use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_16BE;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::path;
 use std::io::Write;
 use std::str;
 use std::fs::File;
@@ -610,7 +611,7 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
              tm: &mut euclid::Transform2D<f64>,
              tlm: &euclid::Transform2D<f64>,
              flip_ctm: &euclid::Transform2D<f64>,
-             output: &mut TextOutput ) {
+             output: &mut OutputDev) {
     let font = ts.font.as_ref().unwrap();
     //let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
     println!("{:?}", font.decode(s));
@@ -645,7 +646,7 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
     output.end_word();
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct MediaBox {
     llx: f64,
     lly: f64,
@@ -672,7 +673,36 @@ fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
 
 }
 
-fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, media_box: &MediaBox, output: &mut TextOutput, page_num: u32) {
+#[derive(Debug)]
+enum PathOp {
+    MoveTo(f64, f64),
+    LineTo(f64, f64),
+    // XXX: is it worth distinguishing the different kinds of curve ops?
+    CurveTo(f64, f64, f64, f64, f64, f64),
+    Rect(f64, f64, f64, f64),
+    Close,
+}
+
+#[derive(Debug)]
+struct Path {
+    ops: Vec<PathOp>
+}
+
+impl Path {
+    fn new() -> Path {
+        Path { ops: Vec::new() }
+    }
+    fn current_point(&self) -> (f64, f64) {
+        match self.ops.last().unwrap() {
+            &PathOp::MoveTo(x, y) => { (x, y) }
+            &PathOp::LineTo(x, y) => { (x, y) }
+            &PathOp::CurveTo(_, _, _, _, x, y) => { (x, y) }
+            _ => { panic!() }
+        }
+    }
+}
+
+fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, media_box: &MediaBox, output: &mut OutputDev, page_num: u32) {
     let data = get_contents(contents);
     //println!("contents {}", pdf_to_utf8(&data));
     let content = Content::decode(&data).unwrap();
@@ -692,6 +722,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
     let mut gs_stack = Vec::new();
     let mut tm = euclid::Transform2D::identity();
     let mut tlm = euclid::Transform2D::identity();
+    let mut path = Path::new();
     let mut flip_ctm = euclid::Transform2D::row_major(1., 0., 0., -1., 0., (media_box.ury - media_box.lly));
     println!("MediaBox {:?}", media_box);
     for operation in &content.operations {
@@ -816,7 +847,51 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 apply_state(&mut gs, state);
             }
             "w" | "J" | "j" | "M" | "d" | "ri" | "i" => { println!("unknown graphics state operator {:?}", operation); }
-            "m" | "l" | "c" | "v" | "y" | "h" | "re" => { println!("unknown path construction operator {:?}", operation); }
+            "m" => { path.ops.push(PathOp::MoveTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) }
+            "l" => { path.ops.push(PathOp::LineTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) }
+            "c" => { path.ops.push(PathOp::CurveTo(
+                as_num(&operation.operands[0]),
+                as_num(&operation.operands[1]),
+                as_num(&operation.operands[2]),
+                as_num(&operation.operands[3]),
+                as_num(&operation.operands[4]),
+                as_num(&operation.operands[5])))
+            }
+            "v" => {
+                let (x, y) = path.current_point();
+                path.ops.push(PathOp::CurveTo(
+                x,
+                y,
+                as_num(&operation.operands[0]),
+                as_num(&operation.operands[1]),
+                as_num(&operation.operands[2]),
+                as_num(&operation.operands[3])))
+            }
+            "y" => { path.ops.push(PathOp::CurveTo(
+                as_num(&operation.operands[0]),
+                as_num(&operation.operands[1]),
+                as_num(&operation.operands[2]),
+                as_num(&operation.operands[3]),
+                as_num(&operation.operands[2]),
+                as_num(&operation.operands[3])))
+            }
+            "h" => { path.ops.push(PathOp::Close) }
+            "re" => {
+                path.ops.push(PathOp::Rect(as_num(&operation.operands[0]),
+                                           as_num(&operation.operands[1]),
+                                           as_num(&operation.operands[2]),
+                                           as_num(&operation.operands[3])))
+            }
+            "f" => {
+                output.fill(&gs.ctm, &path);
+                path.ops.clear();
+            }
+            "W" | "w*" => { println!("unhandled clipping operation {:?}", operation); }
+            "n" => {
+                println!("discard {:?}", path);
+                path.ops.clear();
+            }
+            "y" | "re" => { println!("unknown path construction operator {:?}", operation); }
             "BMC" | "BDC" | "EMC" => { println!("unhandled marked content {:?}", operation); }
             _ => { println!("unknown operation {:?}", operation);}
         }
@@ -825,13 +900,14 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
 }
 
 
-trait TextOutput {
-    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox);
+trait OutputDev {
+    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, art_box: Option<(f64, f64, f64, f64)>);
     fn end_page(&mut self);
     fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str);
     fn begin_word(&mut self);
     fn end_word(&mut self);
     fn end_line(&mut self);
+    fn fill(&mut self, ctm: &euclid::Transform2D<f64>,  &Path) {}
 }
 
 
@@ -839,8 +915,11 @@ struct HTMLOutput<'a>  {
     file: &'a mut File
 }
 
-impl<'a> TextOutput for HTMLOutput<'a> {
-    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox) {
+type ArtBox = (f64, f64, f64, f64);
+
+impl<'a> OutputDev for HTMLOutput<'a> {
+    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, _: Option<ArtBox>) {
+        write!(self.file, "<meta charset='utf-8' /> ");
         write!(self.file, "<!-- page {} -->", page_num);
         write!(self.file, "<div id='page{}' style='position: relative; height: {}px; width: {}px; border: 1px black solid'>", page_num, media_box.ury - media_box.lly, media_box.urx - media_box.llx);
     }
@@ -856,6 +935,95 @@ impl<'a> TextOutput for HTMLOutput<'a> {
     fn end_line(&mut self) {}
 }
 
+struct SVGOutput<'a>  {
+    file: &'a mut File
+}
+impl<'a> SVGOutput<'a> {
+    fn new(file: &mut File) -> SVGOutput {
+        SVGOutput{file}
+    }
+}
+
+impl<'a> OutputDev for SVGOutput<'a> {
+    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, art_box: Option<(f64, f64, f64, f64)>) {
+        let ver = 1.1;
+        write!(self.file, "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n");
+        if ver == 1.1 {
+            write!(self.file, r#"<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">"#);
+        } else {
+            write!(self.file, r#"<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">"#);
+        }
+        if let Some(art_box) = art_box {
+            let width = art_box.2 - art_box.0;
+            let height = art_box.3 - art_box.1;
+            let y = media_box.ury - art_box.1 - height;
+            write!(self.file, "<svg width=\"{}\" height=\"{}\" xmlns=\"http://www.w3.org/2000/svg\" version=\"{}\" viewBox='{} {} {} {}'>", width, height, ver, art_box.0, y, width, height);
+        } else {
+            write!(self.file, "<svg width='1000' height='1000'>");
+        }
+        write!(self.file, "\n");
+        type Mat = euclid::Transform2D<f64>;
+
+        let mut ctm = Mat::create_scale(1., -1.).post_translate(euclid::vec2(0., media_box.ury));
+        write!(self.file, "<g transform='matrix({}, {}, {}, {}, {}, {})'>\n",
+               ctm.m11,
+               ctm.m12,
+               ctm.m21,
+               ctm.m22,
+               ctm.m31,
+               ctm.m32,
+        );
+    }
+    fn end_page(&mut self) {
+        write!(self.file, "</g>\n");
+        write!(self.file, "</svg>");
+    }
+    fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str) {
+    }
+    fn begin_word(&mut self) {}
+    fn end_word(&mut self) {}
+    fn end_line(&mut self) {}
+    fn fill(&mut self, ctm: &euclid::Transform2D<f64>, path: &Path) {
+        write!(self.file, "<g transform='matrix({}, {}, {}, {}, {}, {})'>",
+               ctm.m11,
+               ctm.m12,
+               ctm.m21,
+               ctm.m22,
+               ctm.m31,
+               ctm.m32,
+        );
+
+        /*if path.ops.len() == 1 {
+            if let PathOp::Rect(x, y, width, height) = path.ops[0] {
+                write!(self.file, "<rect x={} y={} width={} height={} />\n", x, y, width, height);
+                write!(self.file, "</g>");
+                return;
+            }
+        }*/
+        let mut d = Vec::new();
+        for op in &path.ops {
+            match op {
+                &PathOp::MoveTo(x, y) => { d.push(format!("M{} {}", x, y))}
+                &PathOp::LineTo(x, y) => { d.push(format!("L{} {}", x, y))},
+                &PathOp::CurveTo(x1, y1, x2, y2, x, y) => { d.push(format!("C{} {} {} {} {} {}", x1, y1, x2, y2, x, y))},
+                &PathOp::Close => { d.push(format!("Z"))},
+                &PathOp::Rect(x, y, width, height) => {
+                    d.push(format!("M{} {}", x, y));
+                    d.push(format!("L{} {}", x + width, y));
+                    d.push(format!("L{} {}", x + width, y + height));
+                    d.push(format!("L{} {}", x, y + height));
+                    d.push(format!("Z"));
+                }
+
+            }
+        }
+        write!(self.file, "<path d='{}' />", d.join(" "));
+        write!(self.file, "</g>");
+        write!(self.file, "\n");
+
+    }
+}
+
 struct PlainTextOutput<'a>  {
     file: &'a mut File,
     last_end: f64,
@@ -868,8 +1036,8 @@ impl<'a> PlainTextOutput<'a> {
     }
 }
 
-impl<'a> TextOutput for PlainTextOutput<'a> {
-    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox) {
+impl<'a> OutputDev for PlainTextOutput<'a> {
+    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, _: Option<ArtBox>) {
     }
     fn end_page(&mut self) {
     }
@@ -895,13 +1063,12 @@ impl<'a> TextOutput for PlainTextOutput<'a> {
 fn main() {
     let file = env::args().nth(1).unwrap();
     println!("{}", file);
-    let path = Path::new(&file);
+    let path = path::Path::new(&file);
     let filename = path.file_name().expect("expected a filename");
     let mut output_file = PathBuf::new();
     output_file.push(filename);
     output_file.set_extension("html");
     let mut output_file = File::create(output_file).expect("could not create output");
-    write!(&mut output_file, "<meta charset='utf-8' /> ");
     let doc = Document::load(path).unwrap();
     println!("Version: {}", doc.version);
     if let Some(ref info) = get_info(&doc) {
@@ -916,12 +1083,17 @@ fn main() {
     println!("Pages: {:?}", get_pages(&doc));
     println!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
 
-    let mut html_output = PlainTextOutput::new(&mut output_file);
-    extract_text(&doc, &mut html_output);
+    let media_box = maybe_get_array(&doc, get_pages(&doc), "MediaBox")
+        .map(|x| x
+        .iter()
+        .map(|x| as_num(x)).collect::<Vec<_>>()).map(|media_box| MediaBox{llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3]});
+
+    let mut html_output = SVGOutput::new(&mut output_file);
+    extract_text(&doc, media_box, &mut html_output);
 }
 
 
-fn extract_text(doc: &Document, output: &mut TextOutput) {
+fn extract_text(doc: &Document, media_box: Option<MediaBox>, output: &mut OutputDev) {
     let pages = doc.get_pages();
     for dict in pages {
         let page_num = dict.0;
@@ -932,13 +1104,18 @@ fn extract_text(doc: &Document, output: &mut TextOutput) {
 
 
         // pdfium searches up the page tree for MediaBoxes as needed
-        let media_box = maybe_get_array(&doc, dict, "MediaBox")
-            .expect("Should have been a MediaBox")
-            .iter()
-            .map(|x| as_num(x)).collect::<Vec<_>>();
-        let media_box = MediaBox{llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3]};
+        let media_box = maybe_get_array(&doc, get_pages(&doc), "MediaBox")
+            .map(|x| x
+                .iter()
+                .map(|x| as_num(x)).collect::<Vec<_>>())
+            .map(|media_box| MediaBox { llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3] })
+            .or(media_box)
+            .expect("Should have been a MediaBox");
 
-        output.begin_page(page_num, &media_box);
+        let art_box = maybe_get_array(&doc, dict, "ArtBox").map(|x| x.iter()
+            .map(|x| as_num(x)).collect::<Vec<_>>()).map(|x| (x[0], x[1], x[2], x[3]));
+
+        output.begin_page(page_num, &media_box, art_box);
         // Contents can point to either an array of references or a single reference
         match dict.get("Contents") {
             Some(&Object::Reference(ref id)) => {
