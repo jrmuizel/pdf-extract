@@ -702,6 +702,13 @@ impl Path {
     }
 }
 
+enum ColorSpace {
+    DeviceGray,
+    DeviceRGB,
+    DeviceCMYK,
+    Separation
+}
+
 fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, media_box: &MediaBox, output: &mut OutputDev, page_num: u32) {
     let data = get_contents(contents);
     //println!("contents {}", pdf_to_utf8(&data));
@@ -746,6 +753,32 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                                                        as_num(&operation.operands[5]));
                 gs.ctm = gs.ctm.pre_mul(&m);
                 println!("matrix {:?}", gs.ctm);
+            }
+            "cs" => {
+                let name = pdf_to_utf8(operation.operands[0].as_name().unwrap());
+                let color_space = match name.as_ref() {
+                    "DeviceGray" => ColorSpace::DeviceGray,
+                    "DeviceRGB" => ColorSpace::DeviceRGB,
+                    "DeviceCMYK" => ColorSpace::DeviceCMYK,
+                    _ => {
+                        let colorspaces = maybe_get_dict(&doc, resources, "ColorSpace").expect("Need to have a ColorSpace dict");
+                        let cs = maybe_get_array(doc, colorspaces,&name[..]).expect("missing colorspace");
+                        let cs_name = pdf_to_utf8(cs[0].as_name().expect("first arg must be a name"));
+                        match cs_name.as_ref() {
+                            "Separation" => {
+                                let name = pdf_to_utf8(cs[1].as_name().expect("second arg must be a name"));
+                                let alternate_space = pdf_to_utf8(cs[2].as_name().expect("second arg must be a name"));
+                                let tint_transform = maybe_deref(doc, &cs[3]);
+
+                                println!("{:?} {:?} {:?}", name, alternate_space, tint_transform);
+                            }
+                            _ => { panic!() }
+                        }
+                        println!("color_space {} {:?} {:?}", name, cs_name, cs);
+                        panic!()
+                    }
+                };
+                println!("unhandled color space {:}", name);
             }
             "TJ" => {
                 let mut ts = &gs.ts;
@@ -959,7 +992,9 @@ impl<'a> OutputDev for SVGOutput<'a> {
             let y = media_box.ury - art_box.1 - height;
             write!(self.file, "<svg width=\"{}\" height=\"{}\" xmlns=\"http://www.w3.org/2000/svg\" version=\"{}\" viewBox='{} {} {} {}'>", width, height, ver, art_box.0, y, width, height);
         } else {
-            write!(self.file, "<svg width='1000' height='1000'>");
+            let width = media_box.urx - media_box.llx;
+            let height = media_box.ury - media_box.lly;
+            write!(self.file, "<svg width=\"{}\" height=\"{}\" xmlns=\"http://www.w3.org/2000/svg\" version=\"{}\" viewBox='{} {} {} {}'>", width, height, ver, media_box.llx, media_box.lly, width, height);
         }
         write!(self.file, "\n");
         type Mat = euclid::Transform2D<f64>;
@@ -1101,7 +1136,6 @@ fn extract_text(doc: &Document, media_box: Option<MediaBox>, output: &mut Output
         println!("page {} {:?}", page_num, dict);
         let resources = maybe_deref(&doc, dict.get("Resources").unwrap()).as_dict().unwrap();
         println!("resources {:?}", resources);
-
 
         // pdfium searches up the page tree for MediaBoxes as needed
         let media_box = maybe_get_array(&doc, get_pages(&doc), "MediaBox")
