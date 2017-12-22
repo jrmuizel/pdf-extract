@@ -149,6 +149,11 @@ fn maybe_get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Opt
     maybe_get_obj(doc, dict, key).and_then(|n| n.as_name()).map(|n| pdf_to_utf8(n))
 }
 
+fn maybe_get_dict<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<&'a Dictionary> {
+    maybe_get_obj(doc, dict, key).and_then(|n| n.as_dict())
+}
+
+
 fn maybe_get_array<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<&'a Vec<Object>> {
     maybe_get_obj(doc, dict, key).and_then(|n| n.as_array())
 }
@@ -597,7 +602,8 @@ fn get_contents(contents: &Stream) -> Vec<u8> {
 struct GraphicsState<'a>
 {
     ctm: euclid::Transform2D<f64>,
-    ts: TextState<'a>
+    ts: TextState<'a>,
+    smask: Option<&'a Dictionary>,
 }
 
 fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
@@ -647,13 +653,41 @@ struct MediaBox {
     ury: f64
 }
 
-fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_box: &MediaBox, output: &mut TextOutput, page_num: u32) {
+fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
+    for (k, v) in state.iter() {
+        match k.as_ref() {
+            "SMask" => { match v {
+                &Object::Name(ref name) => {
+                    if name == b"None" {
+                        gs.smask = None;
+                    } else {
+                        panic!("unexpected smask name")
+                    }
+                }
+                _ => { panic!("unexpected smask type") }
+            }}
+            _ => {  println!("unapplied state: {:?} {:?}", k, v); }
+        }
+    }
+
+}
+
+fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, media_box: &MediaBox, output: &mut TextOutput, page_num: u32) {
     let data = get_contents(contents);
     //println!("contents {}", pdf_to_utf8(&data));
     let content = Content::decode(&data).unwrap();
-    let mut gs : GraphicsState = GraphicsState{ts: TextState { font: None, font_size: std::f64::NAN, character_spacing: 0.,
-                             word_spacing: 0., horizontal_scaling: 100. / 100., rise: 0.},
-    ctm: euclid::Transform2D::identity()};
+    let mut gs: GraphicsState = GraphicsState {
+        ts: TextState {
+            font: None,
+            font_size: std::f64::NAN,
+            character_spacing: 0.,
+            word_spacing: 0.,
+            horizontal_scaling: 100. / 100.,
+            rise: 0.
+        },
+        ctm: euclid::Transform2D::identity(),
+        smask: None
+    };
     //let mut ts = &mut gs.ts;
     let mut gs_stack = Vec::new();
     let mut tm = euclid::Transform2D::identity();
@@ -729,7 +763,8 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                 gs.ts.horizontal_scaling = as_num(&operation.operands[0]) / 100.;
             }
             "Tf" => {
-                let font = make_font(doc, get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap());
+                let fonts = maybe_get_dict(&doc, resources, "Font");
+                let font = make_font(doc, get_obj(doc, fonts.expect("Need a font dictionary").get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap());
                 {
                     /*let file = font.get_descriptor().and_then(|desc| desc.get_file());
                     if let Some(file) = file {
@@ -774,8 +809,15 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
             }
             "q" => { gs_stack.push(gs.clone()); }
             "Q" => { gs = gs_stack.pop().unwrap(); }
-            "w" | "J" | "j" | "M" | "d" | "ri" | "i" | "gs" => { println!("unknown graphics state operator {:?}", operation); }
+            "gs" => {
+                let ext_gstate = maybe_get_dict(&doc, resources, "ExtGState").expect("need an ExtGState");
+                let name = pdf_to_utf8(operation.operands[0].as_name().unwrap());
+                let state = maybe_deref(doc, ext_gstate.get(name.clone()).unwrap()).as_dict().unwrap();
+                apply_state(&mut gs, state);
+            }
+            "w" | "J" | "j" | "M" | "d" | "ri" | "i" => { println!("unknown graphics state operator {:?}", operation); }
             "m" | "l" | "c" | "v" | "y" | "h" | "re" => { println!("unknown path construction operator {:?}", operation); }
+            "BMC" | "BDC" | "EMC" => { println!("unhandled marked content {:?}", operation); }
             _ => { println!("unknown operation {:?}", operation);}
         }
     }
@@ -887,8 +929,7 @@ fn extract_text(doc: &Document, output: &mut TextOutput) {
         println!("page {} {:?}", page_num, dict);
         let resources = maybe_deref(&doc, dict.get("Resources").unwrap()).as_dict().unwrap();
         println!("resources {:?}", resources);
-        let font = resources.get("Font").unwrap().as_dict().unwrap();
-        println!("font {:?}", font);
+
 
         // pdfium searches up the page tree for MediaBoxes as needed
         let media_box = maybe_get_array(&doc, dict, "MediaBox")
@@ -903,7 +944,7 @@ fn extract_text(doc: &Document, output: &mut TextOutput) {
             Some(&Object::Reference(ref id)) => {
                 match doc.get_object(*id).unwrap() {
                     &Object::Stream(ref contents) => {
-                        process_stream(&doc, contents, font, &media_box, output, page_num);
+                        process_stream(&doc, contents, resources, &media_box, output, page_num);
                     }
 
                     _ => {}
@@ -914,7 +955,7 @@ fn extract_text(doc: &Document, output: &mut TextOutput) {
                     let id = id.as_reference().unwrap();
                     match doc.get_object(id).unwrap() {
                         &Object::Stream(ref contents) => {
-                            process_stream(&doc, contents, font, &media_box, output, page_num);
+                            process_stream(&doc, contents, resources, &media_box, output, page_num);
                         }
                         _ => {}
                     }
