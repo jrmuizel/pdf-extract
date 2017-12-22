@@ -608,6 +608,7 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
     let font = ts.font.as_ref().unwrap();
     //let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
     println!("{:?}", font.decode(s));
+    output.begin_word();
 
     for c in font.char_codes(s) {
         let tsm = euclid::Transform2D::row_major(ts.font_size * ts.horizontal_scaling,
@@ -621,11 +622,11 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
         //println!("ctm: {:?} tm {:?}", gs.ctm, tm);
         println!("current pos: {:?}", position);
         // 5.9 Extraction of Text Content
-        output.output_character(position.m31, position.m32, ts.font_size, &font.decode_char(c));
 
 
         //println!("w: {}", font.widths[&(*c as i64)]);
         let w0 = font.get_width(c as i64) / 1000.;
+        output.output_character(position.m31, position.m32, w0,ts.font_size, &font.decode_char(c));
         let tj = 0.;
         let ty = 0.;
         let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
@@ -635,6 +636,7 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
         //println!("post pos: {:?}", trm);
 
     }
+    output.end_word();
 }
 
 #[derive(Debug)]
@@ -767,6 +769,7 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
                 tlm = tlm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
                 tm = tlm;
                 println!("Td matrix {:?}", tm);
+                output.end_line();
 
             }
             "q" => { gs_stack.push(gs.clone()); }
@@ -783,7 +786,10 @@ fn process_stream(doc: &Document, contents: &Stream, fonts: &Dictionary, media_b
 trait TextOutput {
     fn begin_page(&mut self, page_num: u32, media_box: &MediaBox);
     fn end_page(&mut self);
-    fn output_character(&mut self, x: f64, y: f64, font_size: f64, char: &str);
+    fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str);
+    fn begin_word(&mut self);
+    fn end_word(&mut self);
+    fn end_line(&mut self);
 }
 
 
@@ -799,9 +805,48 @@ impl<'a> TextOutput for HTMLOutput<'a> {
     fn end_page(&mut self) {
         write!(self.file, "</div>");
     }
-    fn output_character(&mut self, x: f64, y: f64, font_size: f64, char: &str) {
+    fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str) {
         write!(self.file, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
                x, y, font_size, char);
+    }
+    fn begin_word(&mut self) {}
+    fn end_word(&mut self) {}
+    fn end_line(&mut self) {}
+}
+
+struct PlainTextOutput<'a>  {
+    file: &'a mut File,
+    last_end: f64,
+    first_char: bool
+}
+
+impl<'a> PlainTextOutput<'a> {
+    fn new(file: &mut File) -> PlainTextOutput {
+        PlainTextOutput{file, last_end: 100000., first_char: false}
+    }
+}
+
+impl<'a> TextOutput for PlainTextOutput<'a> {
+    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox) {
+    }
+    fn end_page(&mut self) {
+    }
+    fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str) {
+        if self.first_char {
+            if x > self.last_end + width*0.5 {
+                write!(self.file, " ");
+            }
+        }
+        write!(self.file, "{}", char);
+        self.first_char = false;
+        self.last_end = x + width;
+    }
+    fn begin_word(&mut self) {
+        self.first_char = true;
+    }
+    fn end_word(&mut self) {}
+    fn end_line(&mut self) {
+        write!(self.file, "\n");
     }
 }
 
@@ -829,7 +874,7 @@ fn main() {
     println!("Pages: {:?}", get_pages(&doc));
     println!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
 
-    let mut html_output = HTMLOutput{file: &mut output_file};
+    let mut html_output = PlainTextOutput::new(&mut output_file);
     extract_text(&doc, &mut html_output);
 }
 
