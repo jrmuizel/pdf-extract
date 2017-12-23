@@ -170,8 +170,6 @@ struct PdfBasicFont<'a> {
 }
 
 
-
-
 fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Rc<PdfFont + 'a> {
     let subtype = get_name(doc, font, "Subtype");
     println!("MakeFont({})", subtype);
@@ -568,6 +566,46 @@ impl<'a> PdfFontDescriptor<'a> {
 impl<'a> fmt::Debug for PdfFontDescriptor<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.desc.fmt(f)
+    }
+}
+
+struct Type0Func {
+    
+}
+
+enum FunctionType {
+    Type0(Type0Func),
+    Type1,
+    Type3,
+    Type4
+}
+
+struct Function<'a> {
+    dict: &'a Dictionary,
+    doc: &'a Document,
+}
+
+impl<'a> Function<'a> {
+    fn new(doc: &'a Document, obj: &'a Object) -> Function<'a> {
+        let dict = match obj {
+            &Object::Dictionary(ref dict) => dict,
+            &Object::Stream(ref stream) => &stream.dict,
+            _ => panic!()
+        };
+        let function_type = dict.get("FunctionType").unwrap().as_num().unwrap();
+        let f = match function_type {
+            0 => {
+                let stream = match obj {
+                    &Object::Stream(ref stream) => &stream,
+                    _ => panic!()
+                };
+                let contents = get_contents(stream);
+                FunctionType::Type0
+            }
+            _ => { panic!() }
+        };
+
+        Function { doc, dict }
     }
 }
 
