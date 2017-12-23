@@ -142,37 +142,37 @@ fn maybe_get_obj<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Opti
     dict.get(key).map(|o| maybe_deref(doc, o))
 }
 
-trait FromOptObj {
-    fn from_opt_obj(doc: &Document, obj: Option<&Object>) -> Self;
+trait FromOptObj<'a> {
+    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>) -> Self;
 }
 
-trait FromObj {
-    fn from_obj(doc: &Document, obj: &Object) -> Self;
+trait FromObj<'a> {
+    fn from_obj(doc: &'a Document, obj: &'a Object) -> Self;
 }
 
-impl<T: FromObj> FromOptObj for Option<T> {
-    fn from_opt_obj(doc: &Document, obj: Option<&Object>) -> Self {
+impl<'a, T: FromObj<'a>> FromOptObj<'a> for Option<T> {
+    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>) -> Self {
         obj.map(|x| T::from_obj(doc,x))
     }
 }
 
-impl<T: FromObj> FromOptObj for T {
-    fn from_opt_obj(doc: &Document, obj: Option<&Object>) -> Self {
+impl<'a, T: FromObj<'a>> FromOptObj<'a> for T {
+    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>) -> Self {
         T::from_obj(doc, obj.unwrap())
     }
 }
 
 // we follow the same conventions as pdfium for when to support indirect objects:
 // on arrays, streams and dicts
-impl<T: FromObj> FromObj for Vec<T> {
-    fn from_obj(doc: &Document, obj: &Object) -> Self {
+impl<'a, T: FromObj<'a>> FromObj<'a> for Vec<T> {
+    fn from_obj(doc: &'a Document, obj: &'a Object) -> Self {
         maybe_deref(doc, obj).as_array().unwrap().iter()
             .map(|x| T::from_obj(doc, x))
             .collect()
     }
 }
 
-impl FromObj for f64 {
+impl<'a> FromObj<'a> for f64 {
     fn from_obj(doc: &Document, obj: &Object) -> Self {
         match obj {
             &Object::Integer(i) => i as f64,
@@ -182,7 +182,7 @@ impl FromObj for f64 {
     }
 }
 
-impl FromObj for i64 {
+impl<'a> FromObj<'a> for i64 {
     fn from_obj(doc: &Document, obj: &Object) -> Self {
         match obj {
             &Object::Integer(i) => i,
@@ -191,7 +191,13 @@ impl FromObj for i64 {
     }
 }
 
-fn get<'a, T: FromOptObj>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> T {
+impl<'a> FromObj<'a> for &'a Dictionary {
+    fn from_obj(doc: &'a Document, obj: &'a Object) -> &'a Dictionary {
+        maybe_deref(doc, obj).as_dict().unwrap()
+    }
+}
+
+fn get<'a, T: FromOptObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> T {
     T::from_opt_obj(doc, dict.get(key))
 }
 
@@ -202,11 +208,6 @@ fn get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> String {
 fn maybe_get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<String> {
     maybe_get_obj(doc, dict, key).and_then(|n| n.as_name()).map(|n| pdf_to_utf8(n))
 }
-
-fn maybe_get_dict<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<&'a Dictionary> {
-    maybe_get_obj(doc, dict, key).and_then(|n| n.as_dict())
-}
-
 
 fn maybe_get_array<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<&'a Vec<Object>> {
     maybe_get_obj(doc, dict, key).and_then(|n| n.as_array())
@@ -339,15 +340,9 @@ impl<'a> PdfBasicFont<'a> {
                 }
             }
         } else {
-            let mut first_char;
-            let mut last_char;
-            let mut widths;
-            first_char = maybe_get_obj(doc, font, "FirstChar").and_then(|fc| fc.as_i64()).expect("missing FirstChar");
-            last_char = maybe_get_obj(doc, font, "LastChar").and_then(|fc| fc.as_i64()).expect("missing LastChar");
-            widths = maybe_get_obj(doc, font, "Widths").and_then(|widths| widths.as_array()).expect("Widths should be an array")
-                .iter()
-                .map(|width| as_num(width))
-                .collect::<Vec<_>>();
+            let mut first_char: i64 = get(doc, font, "FirstChar");
+            let mut last_char: i64 = get(doc, font, "LastChar");
+            let mut widths: Vec<f64> = get(doc, font, "Widths");
             let mut i = 0;
             println!("first_char {:?}, last_char: {:?}, widths: {} {:?}", first_char, last_char, widths.len(), widths);
 
@@ -862,7 +857,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                     "DeviceRGB" => ColorSpace::DeviceRGB,
                     "DeviceCMYK" => ColorSpace::DeviceCMYK,
                     _ => {
-                        let colorspaces = maybe_get_dict(&doc, resources, "ColorSpace").expect("Need to have a ColorSpace dict");
+                        let colorspaces: &Dictionary = get(&doc, resources, "ColorSpace");
                         let cs = maybe_get_array(doc, colorspaces,&name[..]).expect("missing colorspace");
                         let cs_name = pdf_to_utf8(cs[0].as_name().expect("first arg must be a name"));
                         match cs_name.as_ref() {
@@ -928,8 +923,8 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 gs.ts.horizontal_scaling = as_num(&operation.operands[0]) / 100.;
             }
             "Tf" => {
-                let fonts = maybe_get_dict(&doc, resources, "Font");
-                let font = make_font(doc, get_obj(doc, fonts.expect("Need a font dictionary").get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap());
+                let fonts: &Dictionary = get(&doc, resources, "Font");
+                let font = make_font(doc, get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap());
                 {
                     /*let file = font.get_descriptor().and_then(|desc| desc.get_file());
                     if let Some(file) = file {
@@ -975,9 +970,9 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
             "q" => { gs_stack.push(gs.clone()); }
             "Q" => { gs = gs_stack.pop().unwrap(); }
             "gs" => {
-                let ext_gstate = maybe_get_dict(&doc, resources, "ExtGState").expect("need an ExtGState");
+                let ext_gstate: &Dictionary = get(doc, resources, "ExtGState");
                 let name = pdf_to_utf8(operation.operands[0].as_name().unwrap());
-                let state = maybe_deref(doc, ext_gstate.get(name.clone()).unwrap()).as_dict().unwrap();
+                let state: &Dictionary = get(doc, ext_gstate, &name.clone());
                 apply_state(&mut gs, state);
             }
             "w" | "J" | "j" | "M" | "d" | "ri" | "i" => { println!("unknown graphics state operator {:?}", operation); }
@@ -1219,10 +1214,8 @@ fn main() {
     println!("Pages: {:?}", get_pages(&doc));
     println!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
 
-    let media_box = maybe_get_array(&doc, get_pages(&doc), "MediaBox")
-        .map(|x| x
-        .iter()
-        .map(|x| as_num(x)).collect::<Vec<_>>()).map(|media_box| MediaBox{llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3]});
+    let media_box = get::<Option<Vec<f64>>>(&doc, get_pages(&doc), "MediaBox")
+        .map(|media_box| MediaBox{llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3]});
 
     let mut html_output = SVGOutput::new(&mut output_file);
     extract_text(&doc, media_box, &mut html_output);
@@ -1239,16 +1232,13 @@ fn extract_text(doc: &Document, media_box: Option<MediaBox>, output: &mut Output
         println!("resources {:?}", resources);
 
         // pdfium searches up the page tree for MediaBoxes as needed
-        let media_box = maybe_get_array(&doc, get_pages(&doc), "MediaBox")
-            .map(|x| x
-                .iter()
-                .map(|x| as_num(x)).collect::<Vec<_>>())
+        let media_box = get::<Option<Vec<f64>>>(&doc, get_pages(&doc), "MediaBox")
             .map(|media_box| MediaBox { llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3] })
             .or(media_box)
             .expect("Should have been a MediaBox");
 
-        let art_box = maybe_get_array(&doc, dict, "ArtBox").map(|x| x.iter()
-            .map(|x| as_num(x)).collect::<Vec<_>>()).map(|x| (x[0], x[1], x[2], x[3]));
+        let art_box = get::<Option<Vec<f64>>>(&doc, dict, "ArtBox")
+            .map(|x| (x[0], x[1], x[2], x[3]));
 
         output.begin_page(page_num, &media_box, art_box);
         // Contents can point to either an array of references or a single reference
