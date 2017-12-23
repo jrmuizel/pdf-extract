@@ -142,6 +142,59 @@ fn maybe_get_obj<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Opti
     dict.get(key).map(|o| maybe_deref(doc, o))
 }
 
+trait FromOptObj {
+    fn from_opt_obj(doc: &Document, obj: Option<&Object>) -> Self;
+}
+
+trait FromObj {
+    fn from_obj(doc: &Document, obj: &Object) -> Self;
+}
+
+impl<T: FromObj> FromOptObj for Option<T> {
+    fn from_opt_obj(doc: &Document, obj: Option<&Object>) -> Self {
+        obj.map(|x| T::from_obj(doc,x))
+    }
+}
+
+impl<T: FromObj> FromOptObj for T {
+    fn from_opt_obj(doc: &Document, obj: Option<&Object>) -> Self {
+        T::from_obj(doc, obj.unwrap())
+    }
+}
+
+// we follow the same conventions as pdfium for when to support indirect objects:
+// on arrays, streams and dicts
+impl<T: FromObj> FromObj for Vec<T> {
+    fn from_obj(doc: &Document, obj: &Object) -> Self {
+        maybe_deref(doc, obj).as_array().unwrap().iter()
+            .map(|x| T::from_obj(doc, x))
+            .collect()
+    }
+}
+
+impl FromObj for f64 {
+    fn from_obj(doc: &Document, obj: &Object) -> Self {
+        match obj {
+            &Object::Integer(i) => i as f64,
+            &Object::Real(f) => f,
+            _ => panic!()
+        }
+    }
+}
+
+impl FromObj for i64 {
+    fn from_obj(doc: &Document, obj: &Object) -> Self {
+        match obj {
+            &Object::Integer(i) => i,
+            _ => panic!()
+        }
+    }
+}
+
+fn get<'a, T: FromOptObj>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> T {
+    T::from_opt_obj(doc, dict.get(key))
+}
+
 fn get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> String {
     pdf_to_utf8(dict.get(key).map(|o| maybe_deref(doc, o)).unwrap().as_name().unwrap())
 }
@@ -570,42 +623,52 @@ impl<'a> fmt::Debug for PdfFontDescriptor<'a> {
 }
 
 struct Type0Func {
-    
+    domain: Vec<f64>,
+    range: Vec<f64>,
+    contents: Vec<u8>,
+    size: Vec<i64>,
+    bits_per_sample: i64,
+    order: Option<i64>,
 }
 
-enum FunctionType {
+enum Function {
     Type0(Type0Func),
     Type1,
     Type3,
     Type4
 }
 
-struct Function<'a> {
-    dict: &'a Dictionary,
-    doc: &'a Document,
-}
-
-impl<'a> Function<'a> {
-    fn new(doc: &'a Document, obj: &'a Object) -> Function<'a> {
+impl Function {
+    fn new(doc: &Document, obj: &Object) -> Function {
         let dict = match obj {
             &Object::Dictionary(ref dict) => dict,
             &Object::Stream(ref stream) => &stream.dict,
             _ => panic!()
         };
-        let function_type = dict.get("FunctionType").unwrap().as_num().unwrap();
+        let function_type = dict.get("FunctionType").unwrap().as_i64().unwrap();
         let f = match function_type {
             0 => {
                 let stream = match obj {
-                    &Object::Stream(ref stream) => &stream,
+                    &Object::Stream(ref stream) => stream,
                     _ => panic!()
                 };
+                let range: Vec<f64> = get(doc, dict, "Range");
+                let domain: Vec<f64> = get(doc, dict, "Domain");
                 let contents = get_contents(stream);
-                FunctionType::Type0
+                let size: Vec<i64> = get(doc, dict, "Size");
+                let bits_per_sample = get(doc, dict, "BitsPerSample");
+                let order = get(doc, dict, "Order");
+
+
+                //let encode = get::<Option<Vec<f64>>>(doc, dict, "Encode")
+                  //  .unwrap_or(size.iter().cloned().flat_map(|x| [0. as f64, (x - 1) as f64].into_iter().cloned()).collect::<Vec<f64>>());
+                let decode: Option<Vec<f64>> = get(doc, dict, "Decode");
+
+                Function::Type0(Type0Func { domain, range, size, contents, bits_per_sample, order })
             }
             _ => { panic!() }
         };
-
-        Function { doc, dict }
+        f
     }
 }
 
