@@ -8,6 +8,7 @@ extern crate encoding;
 extern crate euclid;
 extern crate adobe_cmap_parser;
 extern crate type1_encoding_parser;
+extern crate unicode_normalization;
 use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_16BE;
 use std::fmt;
@@ -143,7 +144,7 @@ fn maybe_get_obj<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Opti
 }
 
 trait FromOptObj<'a> {
-    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>) -> Self;
+    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &str) -> Self;
 }
 
 trait FromObj<'a> {
@@ -151,14 +152,14 @@ trait FromObj<'a> {
 }
 
 impl<'a, T: FromObj<'a>> FromOptObj<'a> for Option<T> {
-    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>) -> Self {
+    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &str) -> Self {
         obj.map(|x| T::from_obj(doc,x))
     }
 }
 
 impl<'a, T: FromObj<'a>> FromOptObj<'a> for T {
-    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>) -> Self {
-        T::from_obj(doc, obj.unwrap())
+    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &str) -> Self {
+        T::from_obj(doc, obj.expect(key))
     }
 }
 
@@ -198,7 +199,7 @@ impl<'a> FromObj<'a> for &'a Dictionary {
 }
 
 fn get<'a, T: FromOptObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> T {
-    T::from_opt_obj(doc, dict.get(key))
+    T::from_opt_obj(doc, dict.get(key), key)
 }
 
 fn get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> String {
@@ -269,8 +270,8 @@ impl<'a> PdfBasicFont<'a> {
         let unicode_map = get_unicode_map(doc, font);
 
         let mut encoding_table = None;
-        if let Some(encoding) = encoding {
-            if let &Object::Name(ref encoding_name) = encoding {
+        match encoding {
+            Some(&Object::Name(ref encoding_name)) => {
                 println!("encoding {:?}", pdf_to_utf8(encoding_name));
                 //encoding_table = Some(Vec::from(
                 let encoding = match &encoding_name[..] {
@@ -282,9 +283,8 @@ impl<'a> PdfBasicFont<'a> {
                 encoding_table = Some(encoding.iter()
                     .map(|x| if let &Some(x) = x { glyphnames::name_to_unicode(x).unwrap() } else { 0 })
                     .collect());
-
-            } else {
-                let encoding = encoding.as_dict().unwrap();
+            }
+            Some(&Object::Dictionary(ref encoding)) => {
                 //println!("Encoding {:?}", encoding);
                 if let Some(base_encoding) = maybe_get_obj(doc, encoding, "BaseEncoding") {
                     panic!("BaseEncoding {:?}", base_encoding);
@@ -311,20 +311,22 @@ impl<'a> PdfBasicFont<'a> {
 
                 encoding_table = Some(table);
             }
-        } else {
-            if let Some(type1_encoding) = type1_encoding {
-                let mut table = Vec::from(PDFDocEncoding);
-                println!("type1encoding");
-                for (code, name) in type1_encoding {
-                    let unicode = glyphnames::name_to_unicode(&pdf_to_utf8(&name));
-                    if let Some(unicode) = unicode {
-                        table[code as usize] = unicode;
-                    } else {
-                        println!("unknown character {}", pdf_to_utf8(&name));
+            None => {
+                if let Some(type1_encoding) = type1_encoding {
+                    let mut table = Vec::from(PDFDocEncoding);
+                    println!("type1encoding");
+                    for (code, name) in type1_encoding {
+                        let unicode = glyphnames::name_to_unicode(&pdf_to_utf8(&name));
+                        if let Some(unicode) = unicode {
+                            table[code as usize] = unicode;
+                        } else {
+                            println!("unknown character {}", pdf_to_utf8(&name));
+                        }
                     }
+                    encoding_table = Some(table)
                 }
-                encoding_table = Some(table)
             }
+            _ => { panic!() }
         }
 
         let mut width_map = HashMap::new();
@@ -623,7 +625,27 @@ struct Type0Func {
     contents: Vec<u8>,
     size: Vec<i64>,
     bits_per_sample: i64,
-    order: Option<i64>,
+    encode: Vec<f64>,
+    decode: Vec<f64>,
+}
+
+fn interpolate(x: f64, x_min: f64, x_max: f64, y_min: f64, y_max: f64) -> f64 {
+    let divisor = x - x_min;
+    if divisor != 0. {
+        y_min + (x - x_min) * ((y_max - y_min) / divisor)
+    } else {
+        // (x - x_min) will be 0 which means we want to discard the interpolation
+        // and arbitrarily choose y_min to match pdfium
+        y_min
+    }
+}
+
+impl Type0Func {
+    fn eval(&self, input: &[f64], output: &mut [f64]) {
+        let n_inputs = self.domain.len() / 2;
+        let n_ouputs = self.range.len() / 2;
+
+    }
 }
 
 enum Function {
@@ -652,14 +674,20 @@ impl Function {
                 let contents = get_contents(stream);
                 let size: Vec<i64> = get(doc, dict, "Size");
                 let bits_per_sample = get(doc, dict, "BitsPerSample");
-                let order = get(doc, dict, "Order");
+                // We ignore 'Order' like pdfium, poppler and pdf.js
 
+                let encode = get::<Option<Vec<f64>>>(doc, dict, "Encode");
+                // maybe there's some better way to write this.
+                let encode = encode.unwrap_or_else(|| {
+                    let mut default = Vec::new();
+                    for i in &size {
+                        default.extend([0., (i - 1) as f64].iter());
+                    }
+                    default
+                });
+                let decode = get::<Option<Vec<f64>>>(doc, dict, "Decode").unwrap_or_else(|| range.clone());
 
-                //let encode = get::<Option<Vec<f64>>>(doc, dict, "Encode")
-                  //  .unwrap_or(size.iter().cloned().flat_map(|x| [0. as f64, (x - 1) as f64].into_iter().cloned()).collect::<Vec<f64>>());
-                let decode: Option<Vec<f64>> = get(doc, dict, "Decode");
-
-                Function::Type0(Type0Func { domain, range, size, contents, bits_per_sample, order })
+                Function::Type0(Type0Func { domain, range, size, contents, bits_per_sample, encode, decode })
             }
             _ => { panic!() }
         };
@@ -723,13 +751,13 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
         let trm = tm.pre_mul(&gs.ctm);
         let position = trm.post_mul(&flip_ctm);
         //println!("ctm: {:?} tm {:?}", gs.ctm, tm);
-        println!("current pos: {:?}", position);
+        //println!("current pos: {:?}", position);
         // 5.9 Extraction of Text Content
 
 
         //println!("w: {}", font.widths[&(*c as i64)]);
         let w0 = font.get_width(c as i64) / 1000.;
-        output.output_character(position.m31, position.m32, w0,ts.font_size, &font.decode_char(c));
+        output.output_character(position.m31, position.m32, w0, ts.font_size, &font.decode_char(c));
         let tj = 0.;
         let ty = 0.;
         let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
@@ -949,6 +977,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                                                        as_num(&operation.operands[5]));
                 tm = tlm;
                 println!("Tm: matrix {:?}", tm);
+                output.end_line();
 
             }
             "Td" => {
@@ -1158,36 +1187,50 @@ impl<'a> OutputDev for SVGOutput<'a> {
 struct PlainTextOutput<'a>  {
     file: &'a mut File,
     last_end: f64,
+    last_y: f64,
     first_char: bool
 }
 
 impl<'a> PlainTextOutput<'a> {
     fn new(file: &mut File) -> PlainTextOutput {
-        PlainTextOutput{file, last_end: 100000., first_char: false}
+        PlainTextOutput{file, last_end: 100000., first_char: false, last_y: 0.}
     }
 }
 
+/* There are some structural hints that PDFs can use to signal word and line endings:
+ * however relying on these is not likely to be sufficient. */
 impl<'a> OutputDev for PlainTextOutput<'a> {
     fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, _: Option<ArtBox>) {
     }
     fn end_page(&mut self) {
     }
     fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str) {
+        println!("last_end: {} x: {}, width: {}", self.last_end, x, width);
         if self.first_char {
-            if x > self.last_end + width*0.5 {
+            if (y - self.last_y).abs() > font_size * 1.5 {
+                write!(self.file, "\n");
+            }
+            if x < self.last_end && (y - self.last_y).abs() > font_size * 0.5 {
+                write!(self.file, "\n");
+            }
+
+            if x > self.last_end + font_size * 0.1 {
+                println!("width: {}, space: {}, thresh: {}", width, x - self.last_end, font_size * 0.1);
                 write!(self.file, " ");
             }
         }
+        //let norm = unicode_normalization::UnicodeNormalization::nfkc(char);
         write!(self.file, "{}", char);
         self.first_char = false;
-        self.last_end = x + width;
+        self.last_y = y;
+        self.last_end = x + width * font_size;
     }
     fn begin_word(&mut self) {
         self.first_char = true;
     }
     fn end_word(&mut self) {}
     fn end_line(&mut self) {
-        write!(self.file, "\n");
+        //write!(self.file, "\n");
     }
 }
 
@@ -1217,7 +1260,7 @@ fn main() {
     let media_box = get::<Option<Vec<f64>>>(&doc, get_pages(&doc), "MediaBox")
         .map(|media_box| MediaBox{llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3]});
 
-    let mut html_output = SVGOutput::new(&mut output_file);
+    let mut html_output = PlainTextOutput::new(&mut output_file);
     extract_text(&doc, media_box, &mut html_output);
 }
 
@@ -1232,7 +1275,8 @@ fn extract_text(doc: &Document, media_box: Option<MediaBox>, output: &mut Output
         println!("resources {:?}", resources);
 
         // pdfium searches up the page tree for MediaBoxes as needed
-        let media_box = get::<Option<Vec<f64>>>(&doc, get_pages(&doc), "MediaBox")
+        let media_box = get::<Option<Vec<f64>>>(doc, dict, "MediaBox")
+            .or_else(|| get::<Option<Vec<f64>>>(&doc, get_pages(&doc), "MediaBox"))
             .map(|media_box| MediaBox { llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3] })
             .or(media_box)
             .expect("Should have been a MediaBox");
