@@ -663,7 +663,7 @@ impl Function {
             &Object::Stream(ref stream) => &stream.dict,
             _ => panic!()
         };
-        let function_type = dict.get("FunctionType").unwrap().as_i64().unwrap();
+        let function_type: i64 = get(doc, dict,"FunctionType");
         let f = match function_type {
             0 => {
                 let stream = match obj {
@@ -1278,7 +1278,7 @@ fn main() {
             }
         }
     }
-    println!("Page count: {}", get_pages(&doc).get("Count").unwrap().as_i64().unwrap());
+    println!("Page count: {}", get::<i64>(&doc, &get_pages(&doc), "Count"));
     println!("Pages: {:?}", get_pages(&doc));
     println!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
 
@@ -1302,7 +1302,7 @@ fn extract_text(doc: &Document, media_box: Option<MediaBox>, output: &mut Output
         let page_num = dict.0;
         let dict = doc.get_object(dict.1).unwrap().as_dict().unwrap();
         println!("page {} {:?}", page_num, dict);
-        let resources = maybe_deref(&doc, dict.get("Resources").unwrap()).as_dict().unwrap();
+        let resources: &Dictionary = get(doc, dict, "Resources");
         println!("resources {:?}", resources);
 
         // pdfium searches up the page tree for MediaBoxes as needed
