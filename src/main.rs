@@ -830,13 +830,15 @@ enum ColorSpace {
     DeviceGray,
     DeviceRGB,
     DeviceCMYK,
-    Separation
+    Separation,
+    ICCBased(Vec<u8>)
 }
 
 fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, media_box: &MediaBox, output: &mut OutputDev, page_num: u32) {
     let data = get_contents(contents);
     //println!("contents {}", pdf_to_utf8(&data));
     let content = Content::decode(&data).unwrap();
+    let mut font_table = HashMap::new();
     let mut gs: GraphicsState = GraphicsState {
         ts: TextState {
             font: None,
@@ -895,11 +897,20 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                                 let tint_transform = maybe_deref(doc, &cs[3]);
 
                                 println!("{:?} {:?} {:?}", name, alternate_space, tint_transform);
+                                panic!()
                             }
-                            _ => { panic!() }
+                            "ICCBased" => {
+                                let stream = maybe_deref(doc, &cs[1]).as_stream().unwrap();
+                                println!("ICCBased {:?}", stream);
+                                // XXX: we're going to be continually decompressing everytime this object is referenced
+                                ColorSpace::ICCBased(get_contents(stream))
+                            }
+                            _ => {
+                                println!("color_space {} {:?} {:?}", name, cs_name, cs);
+
+                                panic!()
+                            }
                         }
-                        println!("color_space {} {:?} {:?}", name, cs_name, cs);
-                        panic!()
                     }
                 };
                 println!("unhandled color space {:}", name);
@@ -952,7 +963,8 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
             }
             "Tf" => {
                 let fonts: &Dictionary = get(&doc, resources, "Font");
-                let font = make_font(doc, get_obj(doc, fonts.get(str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap()).unwrap()).as_dict().unwrap());
+                let name = str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap();
+                let font = font_table.entry(name).or_insert_with(|| make_font(doc, get_obj(doc, fonts.get(name).unwrap()).as_dict().unwrap())).clone();
                 {
                     /*let file = font.get_descriptor().and_then(|desc| desc.get_file());
                     if let Some(file) = file {
