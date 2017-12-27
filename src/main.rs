@@ -9,6 +9,7 @@ extern crate euclid;
 extern crate adobe_cmap_parser;
 extern crate type1_encoding_parser;
 extern crate unicode_normalization;
+use euclid::vec2;
 use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_16BE;
 use std::fmt;
@@ -757,7 +758,10 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
 
         //println!("w: {}", font.widths[&(*c as i64)]);
         let w0 = font.get_width(c as i64) / 1000.;
-        output.output_character(position.m31, position.m32, w0, ts.font_size, &font.decode_char(c));
+        let transformed_font_size_vec = trm.transform_vector(&vec2(ts.font_size, ts.font_size));
+        // get the length of one sized of the square with the same area with a rectangle of size (x, y)
+        let transformed_font_size = (transformed_font_size_vec.x*transformed_font_size_vec.y).sqrt();
+        output.output_character(position.m31, position.m32, w0, transformed_font_size, &font.decode_char(c));
         let tj = 0.;
         let ty = 0.;
         let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
@@ -977,7 +981,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 gs.ts.font = Some(font);
 
                 gs.ts.font_size = as_num(&operation.operands[1]);
-                println!("font size: {}", gs.ts.font_size);
+                println!("font size: {} {:?}", gs.ts.font_size, operation);
             }
             "Tm" => {
                 assert!(operation.operands.len() == 6);
@@ -1083,6 +1087,12 @@ trait OutputDev {
 
 struct HTMLOutput<'a>  {
     file: &'a mut File
+}
+
+impl<'a> HTMLOutput<'a> {
+    fn new(file: &mut File) -> HTMLOutput {
+        HTMLOutput{file}
+    }
 }
 
 type ArtBox = (f64, f64, f64, f64);
@@ -1247,13 +1257,16 @@ impl<'a> OutputDev for PlainTextOutput<'a> {
 }
 
 fn main() {
+    //let output_kind = "html";
+    let output_kind = "txt";
+    //let output_kind = "svg";
     let file = env::args().nth(1).unwrap();
     println!("{}", file);
     let path = path::Path::new(&file);
     let filename = path.file_name().expect("expected a filename");
     let mut output_file = PathBuf::new();
     output_file.push(filename);
-    output_file.set_extension("html");
+    output_file.set_extension(output_kind);
     let mut output_file = File::create(output_file).expect("could not create output");
     let doc = Document::load(path).unwrap();
     println!("Version: {}", doc.version);
@@ -1272,8 +1285,14 @@ fn main() {
     let media_box = get::<Option<Vec<f64>>>(&doc, get_pages(&doc), "MediaBox")
         .map(|media_box| MediaBox{llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3]});
 
-    let mut html_output = PlainTextOutput::new(&mut output_file);
-    extract_text(&doc, media_box, &mut html_output);
+
+    let mut output: Box<OutputDev> = match output_kind {
+        "txt" => Box::new(PlainTextOutput::new(&mut output_file)),
+        "html" => Box::new(HTMLOutput::new(&mut output_file)),
+        "svg" => Box::new(SVGOutput::new(&mut output_file)),
+        _ => panic!(),
+    };
+    extract_text(&doc, media_box, &mut *output);
 }
 
 
