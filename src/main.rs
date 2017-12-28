@@ -148,54 +148,60 @@ trait FromOptObj<'a> {
     fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &str) -> Self;
 }
 
-trait FromObj<'a> {
-    fn from_obj(doc: &'a Document, obj: &'a Object) -> Self;
+trait FromObj<'a> where Self: std::marker::Sized {
+    fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<Self>;
 }
 
 impl<'a, T: FromObj<'a>> FromOptObj<'a> for Option<T> {
     fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &str) -> Self {
-        obj.map(|x| T::from_obj(doc,x))
+        obj.and_then(|x| T::from_obj(doc,x))
     }
 }
 
 impl<'a, T: FromObj<'a>> FromOptObj<'a> for T {
     fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &str) -> Self {
-        T::from_obj(doc, obj.expect(key))
+        T::from_obj(doc, obj.expect(key)).expect("wrong type")
     }
 }
 
 // we follow the same conventions as pdfium for when to support indirect objects:
 // on arrays, streams and dicts
 impl<'a, T: FromObj<'a>> FromObj<'a> for Vec<T> {
-    fn from_obj(doc: &'a Document, obj: &'a Object) -> Self {
-        maybe_deref(doc, obj).as_array().unwrap().iter()
-            .map(|x| T::from_obj(doc, x))
-            .collect()
+    fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<Self> {
+        maybe_deref(doc, obj).as_array().map(|x| x.iter()
+            .map(|x| T::from_obj(doc, x).expect("wrong type"))
+            .collect())
     }
 }
 
 impl<'a> FromObj<'a> for f64 {
-    fn from_obj(doc: &Document, obj: &Object) -> Self {
+    fn from_obj(doc: &Document, obj: &Object) -> Option<Self> {
         match obj {
-            &Object::Integer(i) => i as f64,
-            &Object::Real(f) => f,
-            _ => panic!()
+            &Object::Integer(i) => Some(i as f64),
+            &Object::Real(f) => Some(f),
+            _ => None
         }
     }
 }
 
 impl<'a> FromObj<'a> for i64 {
-    fn from_obj(doc: &Document, obj: &Object) -> Self {
+    fn from_obj(doc: &Document, obj: &Object) -> Option<Self> {
         match obj {
-            &Object::Integer(i) => i,
-            _ => panic!()
+            &Object::Integer(i) => Some(i),
+            _ => None
         }
     }
 }
 
 impl<'a> FromObj<'a> for &'a Dictionary {
-    fn from_obj(doc: &'a Document, obj: &'a Object) -> &'a Dictionary {
-        maybe_deref(doc, obj).as_dict().unwrap()
+    fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<&'a Dictionary> {
+        maybe_deref(doc, obj).as_dict()
+    }
+}
+
+impl<'a> FromObj<'a> for &'a Object {
+    fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<&'a Object> {
+        Some(maybe_deref(doc, obj))
     }
 }
 
@@ -241,9 +247,9 @@ impl<'a> PdfBasicFont<'a> {
         let base_name = get_name(doc, font, "BaseFont");
         let subtype = get_name(doc, font, "Subtype");
 
-        let encoding = maybe_get_obj(doc, font, "Encoding");
+        let encoding: Option<&Object> = get(doc, font, "Encoding");
         println!("base_name {} {} enc:{:?} {:?}", base_name, subtype, encoding, font);
-        let descriptor = maybe_get_obj(doc, font, "FontDescriptor").and_then(|x| x.as_dict());
+        let descriptor: Option<&Dictionary> = get(doc, font, "FontDescriptor");
         let mut type1_encoding = None;
         if let Some(descriptor) = descriptor {
             println!("descriptor {:?}", descriptor);
