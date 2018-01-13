@@ -1262,6 +1262,21 @@ impl<'a> OutputDev for PlainTextOutput<'a> {
     }
 }
 
+fn print_metadata(doc: &Document) {
+    println!("Version: {}", doc.version);
+    if let Some(ref info) = get_info(&doc) {
+        for (k, v) in *info {
+            match v {
+                &Object::String(ref s, StringFormat::Literal) => { println!("{}: {}", k, pdf_to_utf8(s)); }
+                _ => {}
+            }
+        }
+    }
+    println!("Page count: {}", get::<i64>(&doc, &get_pages(&doc), "Count"));
+    println!("Pages: {:?}", get_pages(&doc));
+    println!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
+}
+
 fn main() {
     //let output_kind = "html";
     let output_kind = "txt";
@@ -1275,22 +1290,8 @@ fn main() {
     output_file.set_extension(output_kind);
     let mut output_file = File::create(output_file).expect("could not create output");
     let doc = Document::load(path).unwrap();
-    println!("Version: {}", doc.version);
-    if let Some(ref info) = get_info(&doc) {
-        for (k, v) in *info {
-            match v {
-                &Object::String(ref s, StringFormat::Literal) => { println!("{}: {}", k, pdf_to_utf8(s)); }
-                _ => {}
-            }
-        }
-    }
-    println!("Page count: {}", get::<i64>(&doc, &get_pages(&doc), "Count"));
-    println!("Pages: {:?}", get_pages(&doc));
-    println!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
 
-    let media_box = get::<Option<Vec<f64>>>(&doc, get_pages(&doc), "MediaBox")
-        .map(|media_box| MediaBox{llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3]});
-
+    print_metadata(&doc);
 
     let mut output: Box<OutputDev> = match output_kind {
         "txt" => Box::new(PlainTextOutput::new(&mut output_file)),
@@ -1298,11 +1299,12 @@ fn main() {
         "svg" => Box::new(SVGOutput::new(&mut output_file)),
         _ => panic!(),
     };
-    extract_text(&doc, media_box, &mut *output);
+    output_doc(&doc, &mut *output);
 }
 
 
-fn extract_text(doc: &Document, media_box: Option<MediaBox>, output: &mut OutputDev) {
+fn output_doc(doc: &Document, output: &mut OutputDev) {
+
     let pages = doc.get_pages();
     for dict in pages {
         let page_num = dict.0;
@@ -1315,7 +1317,6 @@ fn extract_text(doc: &Document, media_box: Option<MediaBox>, output: &mut Output
         let media_box = get::<Option<Vec<f64>>>(doc, dict, "MediaBox")
             .or_else(|| get::<Option<Vec<f64>>>(&doc, get_pages(&doc), "MediaBox"))
             .map(|media_box| MediaBox { llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3] })
-            .or(media_box)
             .expect("Should have been a MediaBox");
 
         let art_box = get::<Option<Vec<f64>>>(&doc, dict, "ArtBox")
