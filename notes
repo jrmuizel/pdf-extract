@@ -1,0 +1,17 @@
+https://github.com/euske/pdfminer
+
+Cermine uses  Java itext in characterextractor
+
+Grobid uses xpdf / Using pdf2xml/
+written in Java though
+
+https://www.crossref.org/labs/pdfextract/
+written in ruby recommends Cermine
+
+https://github.com/elifesciences/sciencebeam
+uses Grobid and apache beam
+
+
+contentmine
+
+https://github.com/ContentMine/norma
