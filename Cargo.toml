@@ -1,6 +1,6 @@
 [package]
 authors = ["Jeff Muizelaar <jmuizelaar@mozilla.com>"]
-name = "jrmuizel-pdf-info"
+name = "pdf-extract"
 version = "0.1.0"
 
 [dependencies]

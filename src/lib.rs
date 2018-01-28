@@ -3,7 +3,6 @@ extern crate lopdf;
 use lopdf::content::Content;
 use lopdf::*;
 use std::fmt::Debug;
-use std::env;
 extern crate encoding;
 extern crate euclid;
 extern crate adobe_cmap_parser;
@@ -13,8 +12,6 @@ use euclid::vec2;
 use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_16BE;
 use std::fmt;
-use std::path::PathBuf;
-use std::path;
 use std::io::Write;
 use std::str;
 use std::fs::File;
@@ -781,7 +778,7 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
 }
 
 #[derive(Debug, Clone, Copy)]
-struct MediaBox {
+pub struct MediaBox {
     llx: f64,
     lly: f64,
     urx: f64,
@@ -818,7 +815,7 @@ enum PathOp {
 }
 
 #[derive(Debug)]
-struct Path {
+pub struct Path {
     ops: Vec<PathOp>
 }
 
@@ -1071,7 +1068,6 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 println!("discard {:?}", path);
                 path.ops.clear();
             }
-            "y" | "re" => { println!("unknown path construction operator {:?}", operation); }
             "BMC" | "BDC" | "EMC" => { println!("unhandled marked content {:?}", operation); }
             _ => { println!("unknown operation {:?}", operation);}
         }
@@ -1080,7 +1076,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
 }
 
 
-trait OutputDev {
+pub trait OutputDev {
     fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, art_box: Option<(f64, f64, f64, f64)>);
     fn end_page(&mut self);
     fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str);
@@ -1091,12 +1087,12 @@ trait OutputDev {
 }
 
 
-struct HTMLOutput<'a>  {
+pub struct HTMLOutput<'a>  {
     file: &'a mut File
 }
 
 impl<'a> HTMLOutput<'a> {
-    fn new(file: &mut File) -> HTMLOutput {
+    pub fn new(file: &mut File) -> HTMLOutput {
         HTMLOutput{file}
     }
 }
@@ -1121,11 +1117,11 @@ impl<'a> OutputDev for HTMLOutput<'a> {
     fn end_line(&mut self) {}
 }
 
-struct SVGOutput<'a>  {
+pub struct SVGOutput<'a>  {
     file: &'a mut File
 }
 impl<'a> SVGOutput<'a> {
-    fn new(file: &mut File) -> SVGOutput {
+    pub fn new(file: &mut File) -> SVGOutput {
         SVGOutput{file}
     }
 }
@@ -1212,7 +1208,7 @@ impl<'a> OutputDev for SVGOutput<'a> {
     }
 }
 
-struct PlainTextOutput<'a>  {
+pub struct PlainTextOutput<'a>  {
     file: &'a mut File,
     last_end: f64,
     last_y: f64,
@@ -1220,7 +1216,7 @@ struct PlainTextOutput<'a>  {
 }
 
 impl<'a> PlainTextOutput<'a> {
-    fn new(file: &mut File) -> PlainTextOutput {
+    pub fn new(file: &mut File) -> PlainTextOutput {
         PlainTextOutput{file, last_end: 100000., first_char: false, last_y: 0.}
     }
 }
@@ -1262,7 +1258,8 @@ impl<'a> OutputDev for PlainTextOutput<'a> {
     }
 }
 
-fn print_metadata(doc: &Document) {
+
+pub fn print_metadata(doc: &Document) {
     println!("Version: {}", doc.version);
     if let Some(ref info) = get_info(&doc) {
         for (k, v) in *info {
@@ -1277,33 +1274,9 @@ fn print_metadata(doc: &Document) {
     println!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
 }
 
-fn main() {
-    //let output_kind = "html";
-    let output_kind = "txt";
-    //let output_kind = "svg";
-    let file = env::args().nth(1).unwrap();
-    println!("{}", file);
-    let path = path::Path::new(&file);
-    let filename = path.file_name().expect("expected a filename");
-    let mut output_file = PathBuf::new();
-    output_file.push(filename);
-    output_file.set_extension(output_kind);
-    let mut output_file = File::create(output_file).expect("could not create output");
-    let doc = Document::load(path).unwrap();
 
-    print_metadata(&doc);
-
-    let mut output: Box<OutputDev> = match output_kind {
-        "txt" => Box::new(PlainTextOutput::new(&mut output_file)),
-        "html" => Box::new(HTMLOutput::new(&mut output_file)),
-        "svg" => Box::new(SVGOutput::new(&mut output_file)),
-        _ => panic!(),
-    };
-    output_doc(&doc, &mut *output);
-}
-
-
-fn output_doc(doc: &Document, output: &mut OutputDev) {
+/// Parse a given document and output it to `output`
+pub fn output_doc(doc: &Document, output: &mut OutputDev) {
 
     let pages = doc.get_pages();
     for dict in pages {
