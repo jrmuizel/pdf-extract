@@ -832,11 +832,18 @@ impl Path {
         }
     }
 }
+struct CalRGB {
+    white_point: Vec<f64>,
+    black_point: Option<Vec<f64>>,
+    gamma: Option<Vec<f64>>,
+    matrix: Option<Vec<f64>>
+}
 
 enum ColorSpace {
     DeviceGray,
     DeviceRGB,
     DeviceCMYK,
+    CalRGB(CalRGB),
     Separation,
     ICCBased(Vec<u8>)
 }
@@ -911,6 +918,15 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                                 println!("ICCBased {:?}", stream);
                                 // XXX: we're going to be continually decompressing everytime this object is referenced
                                 ColorSpace::ICCBased(get_contents(stream))
+                            }
+                            "CalRGB" => {
+                                let dict = cs[1].as_dict().expect("secod arg must be a dict");
+                                ColorSpace::CalRGB(CalRGB {
+                                    white_point: get(&doc, dict, "WhitePoint"),
+                                    black_point: get(&doc, dict, "BackPoint"),
+                                    gamma: get(&doc, dict, "Gamma"),
+                                    matrix: get(&doc, dict, "Matrix"),
+                                })
                             }
                             _ => {
                                 println!("color_space {} {:?} {:?}", name, cs_name, cs);
