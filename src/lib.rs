@@ -171,6 +171,28 @@ impl<'a, T: FromObj<'a>> FromObj<'a> for Vec<T> {
     }
 }
 
+// XXX: These will panic if we don't have the right number of items
+// we don't want to do that
+impl<'a, T: FromObj<'a>> FromObj<'a> for [T; 4] {
+    fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<Self> {
+        maybe_deref(doc, obj).as_array().map(|x| {
+            let mut all = x.iter()
+                .map(|x| T::from_obj(doc, x).expect("wrong type"));
+            [all.next().unwrap(), all.next().unwrap(), all.next().unwrap(), all.next().unwrap()]
+        })
+    }
+}
+
+impl<'a, T: FromObj<'a>> FromObj<'a> for [T; 3] {
+    fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<Self> {
+        maybe_deref(doc, obj).as_array().map(|x| {
+            let mut all = x.iter()
+                .map(|x| T::from_obj(doc, x).expect("wrong type"));
+            [all.next().unwrap(), all.next().unwrap(), all.next().unwrap()]
+        })
+    }
+}
+
 impl<'a> FromObj<'a> for f64 {
     fn from_obj(doc: &Document, obj: &Object) -> Option<Self> {
         match obj {
@@ -833,23 +855,23 @@ impl Path {
     }
 }
 
-struct CalRGB {
-    white_point: Vec<f64>,
-    black_point: Option<Vec<f64>>,
-    gamma: Option<Vec<f64>>,
-    matrix: Option<Vec<f64>>
-}
-
 struct CalGray {
-    white_point: Vec<f64>,
-    black_point: Option<Vec<f64>>,
+    white_point: [f64; 3],
+    black_point: Option<[f64; 3]>,
     gamma: Option<f64>,
 }
 
+struct CalRGB {
+    white_point: [f64; 3],
+    black_point: Option<[f64; 3]>,
+    gamma: Option<[f64; 3]>,
+    matrix: Option<Vec<f64>>
+}
+
 struct Lab {
-    white_point: Vec<f64>,
-    black_point: Option<Vec<f64>>,
-    range: Option<Vec<f64>>,
+    white_point: [f64; 3],
+    black_point: Option<[f64; 3]>,
+    range: Option<[f64; 4]>,
 }
 
 enum ColorSpace {
