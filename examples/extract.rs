@@ -1,18 +1,10 @@
 extern crate pdf_extract;
 extern crate lopdf;
 
-use std::fmt::Debug;
 use std::env;
-
-use std::fmt;
 use std::path::PathBuf;
 use std::path;
-use std::io::Write;
-use std::str;
 use std::fs::File;
-use std::slice::Iter;
-use std::collections::HashMap;
-use std::rc::Rc;
 use pdf_extract::*;
 use lopdf::*;
 
