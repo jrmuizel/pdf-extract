@@ -922,6 +922,9 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 };
                 println!("unhandled color space {:}", name);
             }
+            "CS" | "SC" | "SCN" | "sc" | "scn" | "G" | "g" | "RG" | "rg" | "K" | "k" => {
+                println!("unhandled color operation {:?}", operation);
+            }
             "TJ" => {
                 let mut ts = &gs.ts;
                 match operation.operands[0] {
