@@ -141,10 +141,12 @@ fn maybe_get_obj<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Opti
     dict.get(key).map(|o| maybe_deref(doc, o))
 }
 
+// an intermediate trait that can be used to chain conversions that may have failed
 trait FromOptObj<'a> {
     fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &str) -> Self;
 }
 
+// conditionally convert to Self returns None if the conversion failed
 trait FromObj<'a> where Self: std::marker::Sized {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<Self>;
 }
