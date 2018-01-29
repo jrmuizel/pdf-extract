@@ -832,6 +832,7 @@ impl Path {
         }
     }
 }
+
 struct CalRGB {
     white_point: Vec<f64>,
     black_point: Option<Vec<f64>>,
@@ -839,11 +840,18 @@ struct CalRGB {
     matrix: Option<Vec<f64>>
 }
 
+struct CalGray {
+    white_point: Vec<f64>,
+    black_point: Option<Vec<f64>>,
+    gamma: Option<f64>,
+}
+
 enum ColorSpace {
     DeviceGray,
     DeviceRGB,
     DeviceCMYK,
     CalRGB(CalRGB),
+    CalGray(CalGray),
     Separation,
     ICCBased(Vec<u8>)
 }
@@ -920,12 +928,20 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                                 ColorSpace::ICCBased(get_contents(stream))
                             }
                             "CalRGB" => {
-                                let dict = cs[1].as_dict().expect("secod arg must be a dict");
+                                let dict = cs[1].as_dict().expect("second arg must be a dict");
                                 ColorSpace::CalRGB(CalRGB {
                                     white_point: get(&doc, dict, "WhitePoint"),
                                     black_point: get(&doc, dict, "BackPoint"),
                                     gamma: get(&doc, dict, "Gamma"),
                                     matrix: get(&doc, dict, "Matrix"),
+                                })
+                            }
+                            "CalGray" => {
+                                let dict = cs[1].as_dict().expect("second arg must be a dict");
+                                ColorSpace::CalGray(CalGray {
+                                    white_point: get(&doc, dict, "WhitePoint"),
+                                    black_point: get(&doc, dict, "BackPoint"),
+                                    gamma: get(&doc, dict, "Gamma"),
                                 })
                             }
                             _ => {
