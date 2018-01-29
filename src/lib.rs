@@ -846,12 +846,19 @@ struct CalGray {
     gamma: Option<f64>,
 }
 
+struct Lab {
+    white_point: Vec<f64>,
+    black_point: Option<Vec<f64>>,
+    range: Option<Vec<f64>>,
+}
+
 enum ColorSpace {
     DeviceGray,
     DeviceRGB,
     DeviceCMYK,
     CalRGB(CalRGB),
     CalGray(CalGray),
+    Lab(Lab),
     Separation,
     ICCBased(Vec<u8>)
 }
@@ -927,6 +934,14 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                                 // XXX: we're going to be continually decompressing everytime this object is referenced
                                 ColorSpace::ICCBased(get_contents(stream))
                             }
+                            "CalGray" => {
+                                let dict = cs[1].as_dict().expect("second arg must be a dict");
+                                ColorSpace::CalGray(CalGray {
+                                    white_point: get(&doc, dict, "WhitePoint"),
+                                    black_point: get(&doc, dict, "BackPoint"),
+                                    gamma: get(&doc, dict, "Gamma"),
+                                })
+                            }
                             "CalRGB" => {
                                 let dict = cs[1].as_dict().expect("second arg must be a dict");
                                 ColorSpace::CalRGB(CalRGB {
@@ -936,12 +951,12 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                                     matrix: get(&doc, dict, "Matrix"),
                                 })
                             }
-                            "CalGray" => {
+                            "Lab" => {
                                 let dict = cs[1].as_dict().expect("second arg must be a dict");
-                                ColorSpace::CalGray(CalGray {
+                                ColorSpace::Lab(Lab {
                                     white_point: get(&doc, dict, "WhitePoint"),
                                     black_point: get(&doc, dict, "BackPoint"),
-                                    gamma: get(&doc, dict, "Gamma"),
+                                    range: get(&doc, dict, "Range"),
                                 })
                             }
                             _ => {
