@@ -173,6 +173,17 @@ impl<'a, T: FromObj<'a>> FromObj<'a> for Vec<T> {
     }
 }
 
+fn to_array4<T>(v: Vec<T>) -> Option<[T; 4]> {
+    if v.len() != 4 { return None }
+    let mut i = v.into_iter();
+    match (i.next(), i.next(), i.next(), i.next(), i.next()) {
+        (Some(a), Some(b), Some(c), Some(d), None) => {
+            Some([a, b, c, d])
+        }
+        _ => None
+    }
+}
+
 // XXX: These will panic if we don't have the right number of items
 // we don't want to do that
 impl<'a, T: FromObj<'a>> FromObj<'a> for [T; 4] {
@@ -739,6 +750,7 @@ struct TextState<'a>
     character_spacing: f64,
     word_spacing: f64,
     horizontal_scaling: f64,
+    leading: f64,
     rise: f64,
 }
 
@@ -899,6 +911,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
             character_spacing: 0.,
             word_spacing: 0.,
             horizontal_scaling: 100. / 100.,
+            leading: 0.,
             rise: 0.
         },
         ctm: euclid::Transform2D::identity(),
@@ -1036,8 +1049,11 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                     _ => { panic!("unexpected Tj operand {:?}", operation) }
                 }
             }
-            "Ts" => {
-                gs.ts.rise = as_num(&operation.operands[0]);
+            "Tc" => {
+                gs.ts.character_spacing = as_num(&operation.operands[0]);
+            }
+            "Tw" => {
+                gs.ts.word_spacing = as_num(&operation.operands[0]);
             }
             "Tz" => {
                 gs.ts.horizontal_scaling = as_num(&operation.operands[0]) / 100.;
@@ -1059,6 +1075,9 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
 
                 gs.ts.font_size = as_num(&operation.operands[1]);
                 println!("font size: {} {:?}", gs.ts.font_size, operation);
+            }
+            "Ts" => {
+                gs.ts.rise = as_num(&operation.operands[0]);
             }
             "Tm" => {
                 assert!(operation.operands.len() == 6);
@@ -1088,6 +1107,15 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 println!("Td matrix {:?}", tm);
                 output.end_line();
 
+            }
+            "T*" => {
+                let tx = 0.0;
+                let ty = gs.ts.leading;
+
+                tlm = tlm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+                tm = tlm;
+                println!("Td matrix {:?}", tm);
+                output.end_line();
             }
             "q" => { gs_stack.push(gs.clone()); }
             "Q" => { gs = gs_stack.pop().unwrap(); }
