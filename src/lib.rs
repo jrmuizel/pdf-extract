@@ -919,6 +919,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
     };
     //let mut ts = &mut gs.ts;
     let mut gs_stack = Vec::new();
+    let mut mc_stack = Vec::new();
     let mut tm = euclid::Transform2D::identity();
     let mut tlm = euclid::Transform2D::identity();
     let mut path = Path::new();
@@ -1170,7 +1171,12 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 println!("discard {:?}", path);
                 path.ops.clear();
             }
-            "BMC" | "BDC" | "EMC" => { println!("unhandled marked content {:?}", operation); }
+            "BMC" | "BDC" => {
+                mc_stack.push(operation);
+            }
+            "EMC" => {
+                mc_stack.pop();
+            }
             _ => { println!("unknown operation {:?}", operation);}
         }
     }
