@@ -622,10 +622,15 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
         }
     }
     fn decode_char(&self, char: CharCode) -> String {
-        let s = self.to_unicode.as_ref().unwrap()[&char];
-        let s = [s as u16];
-        let s = String::from_utf16(&s).unwrap();
-        s
+        let s = self.to_unicode.as_ref().and_then(|x| x.get(&char));
+        if let Some(s) = s {
+            let s = [*s as u16];
+            let s = String::from_utf16(&s).unwrap();
+            s
+        } else {
+            println!("Unknown character {:?} in {:?}", char, self.font);
+            "".to_string()
+        }
     }
 }
 
