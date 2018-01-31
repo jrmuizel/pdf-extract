@@ -2,6 +2,7 @@ extern crate lopdf;
 
 use lopdf::content::Content;
 use lopdf::*;
+use euclid::*;
 use std::fmt::Debug;
 extern crate encoding;
 extern crate euclid;
@@ -772,14 +773,14 @@ fn get_contents(contents: &Stream) -> Vec<u8> {
 #[derive(Clone)]
 struct GraphicsState<'a>
 {
-    ctm: euclid::Transform2D<f64>,
+    ctm: Transform2D<f64>,
     ts: TextState<'a>,
     smask: Option<&'a Dictionary>,
 }
 
 fn show_text(gs: &mut GraphicsState, s: &[u8],
-             tlm: &euclid::Transform2D<f64>,
-             flip_ctm: &euclid::Transform2D<f64>,
+             tlm: &Transform2D<f64>,
+             flip_ctm: &Transform2D<f64>,
              output: &mut OutputDev) {
     let ts = &mut gs.ts;
     let font = ts.font.as_ref().unwrap();
@@ -788,7 +789,7 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
     output.begin_word();
 
     for c in font.char_codes(s) {
-        let tsm = euclid::Transform2D::row_major(ts.font_size * ts.horizontal_scaling,
+        let tsm = Transform2D::row_major(ts.font_size * ts.horizontal_scaling,
                                                  0.,
                                                  0.,
                                                  ts.horizontal_scaling,
@@ -811,7 +812,7 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
         let ty = 0.;
         let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
         // println!("w0: {}, tx: {}", w0, tx);
-        ts.tm = ts.tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+        ts.tm = ts.tm.pre_mul(&Transform2D::create_translation(tx, ty));
         let trm = ts.tm.pre_mul(&gs.ctm);
         //println!("post pos: {:?}", trm);
 
@@ -919,33 +920,33 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
             horizontal_scaling: 100. / 100.,
             leading: 0.,
             rise: 0.,
-            tm: euclid::Transform2D::identity(),
+            tm: Transform2D::identity(),
         },
-        ctm: euclid::Transform2D::identity(),
+        ctm: Transform2D::identity(),
         smask: None
     };
     //let mut ts = &mut gs.ts;
     let mut gs_stack = Vec::new();
     let mut mc_stack = Vec::new();
     // XXX: replace tlm with a point for text start
-    let mut tlm = euclid::Transform2D::identity();
+    let mut tlm = Transform2D::identity();
     let mut path = Path::new();
-    let mut flip_ctm = euclid::Transform2D::row_major(1., 0., 0., -1., 0., (media_box.ury - media_box.lly));
+    let mut flip_ctm = Transform2D::row_major(1., 0., 0., -1., 0., (media_box.ury - media_box.lly));
     println!("MediaBox {:?}", media_box);
     for operation in &content.operations {
         //println!("op: {:?}", operation);
         match operation.operator.as_ref() {
             "BT" => {
-                tlm = euclid::Transform2D::identity();
+                tlm = Transform2D::identity();
                 gs.ts.tm = tlm;
             }
             "ET" => {
-                tlm = euclid::Transform2D::identity();
+                tlm = Transform2D::identity();
                 gs.ts.tm = tlm;
             }
             "cm" => {
                 assert!(operation.operands.len() == 6);
-                let m = euclid::Transform2D::row_major(as_num(&operation.operands[0]),
+                let m = Transform2D::row_major(as_num(&operation.operands[0]),
                                                        as_num(&operation.operands[1]),
                                                        as_num(&operation.operands[2]),
                                                        as_num(&operation.operands[3]),
@@ -1031,7 +1032,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                                     let tj = i as f64;
                                     let ty = 0.;
                                     let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
-                                    ts.tm = ts.tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+                                    ts.tm = ts.tm.pre_mul(&Transform2D::create_translation(tx, ty));
                                     println!("adjust text by: {} {:?}", i, ts.tm);
                                 }
                                 &Object::Real(i) => {
@@ -1040,7 +1041,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                                     let tj = i as f64;
                                     let ty = 0.;
                                     let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
-                                    ts.tm = ts.tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+                                    ts.tm = ts.tm.pre_mul(&Transform2D::create_translation(tx, ty));
                                     println!("adjust text by: {} {:?}", i, ts.tm);
                                 }
                                 _ => { println!("kind of {:?}", e);}
@@ -1090,7 +1091,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
             }
             "Tm" => {
                 assert!(operation.operands.len() == 6);
-                tlm = euclid::Transform2D::row_major(as_num(&operation.operands[0]),
+                tlm = Transform2D::row_major(as_num(&operation.operands[0]),
                                                        as_num(&operation.operands[1]),
                                                        as_num(&operation.operands[2]),
                                                        as_num(&operation.operands[3]),
@@ -1111,7 +1112,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 let ty = as_num(&operation.operands[1]);
                 println!("translation: {} {}", tx, ty);
 
-                tlm = tlm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+                tlm = tlm.pre_mul(&Transform2D::create_translation(tx, ty));
                 gs.ts.tm = tlm;
                 println!("Td matrix {:?}", gs.ts.tm);
                 output.end_line();
@@ -1121,7 +1122,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 let tx = 0.0;
                 let ty = gs.ts.leading;
 
-                tlm = tlm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+                tlm = tlm.pre_mul(&Transform2D::create_translation(tx, ty));
                 gs.ts.tm = tlm;
                 println!("Td matrix {:?}", gs.ts.tm);
                 output.end_line();
@@ -1199,7 +1200,7 @@ pub trait OutputDev {
     fn begin_word(&mut self);
     fn end_word(&mut self);
     fn end_line(&mut self);
-    fn fill(&mut self, ctm: &euclid::Transform2D<f64>,  &Path) {}
+    fn fill(&mut self, ctm: &Transform2D<f64>,  &Path) {}
 }
 
 
@@ -1262,9 +1263,9 @@ impl<'a> OutputDev for SVGOutput<'a> {
             write!(self.file, "<svg width=\"{}\" height=\"{}\" xmlns=\"http://www.w3.org/2000/svg\" version=\"{}\" viewBox='{} {} {} {}'>", width, height, ver, media_box.llx, media_box.lly, width, height);
         }
         write!(self.file, "\n");
-        type Mat = euclid::Transform2D<f64>;
+        type Mat = Transform2D<f64>;
 
-        let mut ctm = Mat::create_scale(1., -1.).post_translate(euclid::vec2(0., media_box.ury));
+        let mut ctm = Mat::create_scale(1., -1.).post_translate(vec2(0., media_box.ury));
         write!(self.file, "<g transform='matrix({}, {}, {}, {}, {}, {})'>\n",
                ctm.m11,
                ctm.m12,
@@ -1283,7 +1284,7 @@ impl<'a> OutputDev for SVGOutput<'a> {
     fn begin_word(&mut self) {}
     fn end_word(&mut self) {}
     fn end_line(&mut self) {}
-    fn fill(&mut self, ctm: &euclid::Transform2D<f64>, path: &Path) {
+    fn fill(&mut self, ctm: &Transform2D<f64>, path: &Path) {
         write!(self.file, "<g transform='matrix({}, {}, {}, {}, {}, {})'>",
                ctm.m11,
                ctm.m12,
