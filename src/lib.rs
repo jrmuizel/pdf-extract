@@ -776,6 +776,8 @@ struct GraphicsState<'a>
     ctm: Transform2D<f64>,
     ts: TextState<'a>,
     smask: Option<&'a Dictionary>,
+    fill_colorspace: ColorSpace,
+    stroke_colorspace: ColorSpace,
 }
 
 fn show_text(gs: &mut GraphicsState, s: &[u8],
@@ -876,12 +878,14 @@ impl Path {
     }
 }
 
+#[derive(Clone)]
 struct CalGray {
     white_point: [f64; 3],
     black_point: Option<[f64; 3]>,
     gamma: Option<f64>,
 }
 
+#[derive(Clone)]
 struct CalRGB {
     white_point: [f64; 3],
     black_point: Option<[f64; 3]>,
@@ -889,12 +893,14 @@ struct CalRGB {
     matrix: Option<Vec<f64>>
 }
 
+#[derive(Clone)]
 struct Lab {
     white_point: [f64; 3],
     black_point: Option<[f64; 3]>,
     range: Option<[f64; 4]>,
 }
 
+#[derive(Clone)]
 enum ColorSpace {
     DeviceGray,
     DeviceRGB,
@@ -904,6 +910,65 @@ enum ColorSpace {
     Lab(Lab),
     Separation,
     ICCBased(Vec<u8>)
+}
+
+fn make_colorspace<'a>(doc: &'a Document, name: String, resources: &'a Dictionary) -> ColorSpace {
+    match name.as_ref() {
+        "DeviceGray" => ColorSpace::DeviceGray,
+        "DeviceRGB" => ColorSpace::DeviceRGB,
+        "DeviceCMYK" => ColorSpace::DeviceCMYK,
+        _ => {
+            let colorspaces: &Dictionary = get(&doc, resources, "ColorSpace");
+            let cs = maybe_get_array(doc, colorspaces,&name[..]).expect("missing colorspace");
+            let cs_name = pdf_to_utf8(cs[0].as_name().expect("first arg must be a name"));
+            match cs_name.as_ref() {
+                "Separation" => {
+                    let name = pdf_to_utf8(cs[1].as_name().expect("second arg must be a name"));
+                    let alternate_space = pdf_to_utf8(cs[2].as_name().expect("second arg must be a name"));
+                    let tint_transform = maybe_deref(doc, &cs[3]);
+
+                    println!("{:?} {:?} {:?}", name, alternate_space, tint_transform);
+                    panic!()
+                }
+                "ICCBased" => {
+                    let stream = maybe_deref(doc, &cs[1]).as_stream().unwrap();
+                    println!("ICCBased {:?}", stream);
+                    // XXX: we're going to be continually decompressing everytime this object is referenced
+                    ColorSpace::ICCBased(get_contents(stream))
+                }
+                "CalGray" => {
+                    let dict = cs[1].as_dict().expect("second arg must be a dict");
+                    ColorSpace::CalGray(CalGray {
+                        white_point: get(&doc, dict, "WhitePoint"),
+                        black_point: get(&doc, dict, "BackPoint"),
+                        gamma: get(&doc, dict, "Gamma"),
+                    })
+                }
+                "CalRGB" => {
+                    let dict = cs[1].as_dict().expect("second arg must be a dict");
+                    ColorSpace::CalRGB(CalRGB {
+                        white_point: get(&doc, dict, "WhitePoint"),
+                        black_point: get(&doc, dict, "BackPoint"),
+                        gamma: get(&doc, dict, "Gamma"),
+                        matrix: get(&doc, dict, "Matrix"),
+                    })
+                }
+                "Lab" => {
+                    let dict = cs[1].as_dict().expect("second arg must be a dict");
+                    ColorSpace::Lab(Lab {
+                        white_point: get(&doc, dict, "WhitePoint"),
+                        black_point: get(&doc, dict, "BackPoint"),
+                        range: get(&doc, dict, "Range"),
+                    })
+                }
+                _ => {
+                    println!("color_space {} {:?} {:?}", name, cs_name, cs);
+
+                    panic!()
+                }
+            }
+        }
+    }
 }
 
 fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, media_box: &MediaBox, output: &mut OutputDev, page_num: u32) {
@@ -922,6 +987,8 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
             rise: 0.,
             tm: Transform2D::identity(),
         },
+        fill_colorspace: ColorSpace::DeviceGray,
+        stroke_colorspace: ColorSpace::DeviceGray,
         ctm: Transform2D::identity(),
         smask: None
     };
@@ -955,67 +1022,16 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 gs.ctm = gs.ctm.pre_mul(&m);
                 println!("matrix {:?}", gs.ctm);
             }
+            "CS" => {
+                let name = pdf_to_utf8(operation.operands[0].as_name().unwrap());
+                gs.stroke_colorspace = make_colorspace(doc, name, resources);
+            }
             "cs" => {
                 let name = pdf_to_utf8(operation.operands[0].as_name().unwrap());
-                let color_space = match name.as_ref() {
-                    "DeviceGray" => ColorSpace::DeviceGray,
-                    "DeviceRGB" => ColorSpace::DeviceRGB,
-                    "DeviceCMYK" => ColorSpace::DeviceCMYK,
-                    _ => {
-                        let colorspaces: &Dictionary = get(&doc, resources, "ColorSpace");
-                        let cs = maybe_get_array(doc, colorspaces,&name[..]).expect("missing colorspace");
-                        let cs_name = pdf_to_utf8(cs[0].as_name().expect("first arg must be a name"));
-                        match cs_name.as_ref() {
-                            "Separation" => {
-                                let name = pdf_to_utf8(cs[1].as_name().expect("second arg must be a name"));
-                                let alternate_space = pdf_to_utf8(cs[2].as_name().expect("second arg must be a name"));
-                                let tint_transform = maybe_deref(doc, &cs[3]);
-
-                                println!("{:?} {:?} {:?}", name, alternate_space, tint_transform);
-                                panic!()
-                            }
-                            "ICCBased" => {
-                                let stream = maybe_deref(doc, &cs[1]).as_stream().unwrap();
-                                println!("ICCBased {:?}", stream);
-                                // XXX: we're going to be continually decompressing everytime this object is referenced
-                                ColorSpace::ICCBased(get_contents(stream))
-                            }
-                            "CalGray" => {
-                                let dict = cs[1].as_dict().expect("second arg must be a dict");
-                                ColorSpace::CalGray(CalGray {
-                                    white_point: get(&doc, dict, "WhitePoint"),
-                                    black_point: get(&doc, dict, "BackPoint"),
-                                    gamma: get(&doc, dict, "Gamma"),
-                                })
-                            }
-                            "CalRGB" => {
-                                let dict = cs[1].as_dict().expect("second arg must be a dict");
-                                ColorSpace::CalRGB(CalRGB {
-                                    white_point: get(&doc, dict, "WhitePoint"),
-                                    black_point: get(&doc, dict, "BackPoint"),
-                                    gamma: get(&doc, dict, "Gamma"),
-                                    matrix: get(&doc, dict, "Matrix"),
-                                })
-                            }
-                            "Lab" => {
-                                let dict = cs[1].as_dict().expect("second arg must be a dict");
-                                ColorSpace::Lab(Lab {
-                                    white_point: get(&doc, dict, "WhitePoint"),
-                                    black_point: get(&doc, dict, "BackPoint"),
-                                    range: get(&doc, dict, "Range"),
-                                })
-                            }
-                            _ => {
-                                println!("color_space {} {:?} {:?}", name, cs_name, cs);
-
-                                panic!()
-                            }
-                        }
-                    }
-                };
-                println!("unhandled color space {:}", name);
+                gs.fill_colorspace = make_colorspace(doc, name, resources);
             }
-            "CS" | "SC" | "SCN" | "sc" | "scn" | "G" | "g" | "RG" | "rg" | "K" | "k" => {
+            "SC" | "SCN" | "sc" | "scn" | "G" | "g" | "RG" | "rg" | "K" | "k" => {
+
                 println!("unhandled color operation {:?}", operation);
             }
             "TJ" => {
