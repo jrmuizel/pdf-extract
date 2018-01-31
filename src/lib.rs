@@ -757,6 +757,7 @@ struct TextState<'a>
     horizontal_scaling: f64,
     leading: f64,
     rise: f64,
+    tm: euclid::Transform2D<f64>,
 }
 
 // XXX: We'd ideally implement this without having to copy the uncompressed data
@@ -776,11 +777,11 @@ struct GraphicsState<'a>
     smask: Option<&'a Dictionary>,
 }
 
-fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
-             tm: &mut euclid::Transform2D<f64>,
+fn show_text(gs: &mut GraphicsState, s: &[u8],
              tlm: &euclid::Transform2D<f64>,
              flip_ctm: &euclid::Transform2D<f64>,
              output: &mut OutputDev) {
+    let ts = &mut gs.ts;
     let font = ts.font.as_ref().unwrap();
     //let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
     println!("{:?}", font.decode(s));
@@ -793,7 +794,7 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
                                                  ts.horizontal_scaling,
                                                  0.,
                                                  ts.rise);
-        let trm = tm.pre_mul(&gs.ctm);
+        let trm = ts.tm.pre_mul(&gs.ctm);
         let position = trm.post_mul(&flip_ctm);
         //println!("ctm: {:?} tm {:?}", gs.ctm, tm);
         //println!("current pos: {:?}", position);
@@ -810,8 +811,8 @@ fn show_text(ts: &TextState, s: &[u8], gs: &GraphicsState,
         let ty = 0.;
         let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
         // println!("w0: {}, tx: {}", w0, tx);
-        *tm = tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
-        let trm = tm.pre_mul(&gs.ctm);
+        ts.tm = ts.tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+        let trm = ts.tm.pre_mul(&gs.ctm);
         //println!("post pos: {:?}", trm);
 
     }
@@ -917,7 +918,8 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
             word_spacing: 0.,
             horizontal_scaling: 100. / 100.,
             leading: 0.,
-            rise: 0.
+            rise: 0.,
+            tm: euclid::Transform2D::identity(),
         },
         ctm: euclid::Transform2D::identity(),
         smask: None
@@ -925,7 +927,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
     //let mut ts = &mut gs.ts;
     let mut gs_stack = Vec::new();
     let mut mc_stack = Vec::new();
-    let mut tm = euclid::Transform2D::identity();
+    // XXX: replace tlm with a point for text start
     let mut tlm = euclid::Transform2D::identity();
     let mut path = Path::new();
     let mut flip_ctm = euclid::Transform2D::row_major(1., 0., 0., -1., 0., (media_box.ury - media_box.lly));
@@ -935,11 +937,11 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
         match operation.operator.as_ref() {
             "BT" => {
                 tlm = euclid::Transform2D::identity();
-                tm = tlm;
+                gs.ts.tm = tlm;
             }
             "ET" => {
                 tlm = euclid::Transform2D::identity();
-                tm = tlm;
+                gs.ts.tm = tlm;
             }
             "cm" => {
                 assert!(operation.operands.len() == 6);
@@ -1016,29 +1018,30 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 println!("unhandled color operation {:?}", operation);
             }
             "TJ" => {
-                let mut ts = &gs.ts;
                 match operation.operands[0] {
                     Object::Array(ref array) => {
                         for e in array {
                             match e {
                                 &Object::String(ref s, _) => {
-                                    show_text(&gs.ts, s, &gs, &mut tm, &tlm, &flip_ctm, output);
+                                    show_text(&mut gs, s, &tlm, &flip_ctm, output);
                                 }
                                 &Object::Integer(i) => {
+                                    let ts = &mut gs.ts;
                                     let w0 = 0.;
                                     let tj = i as f64;
                                     let ty = 0.;
                                     let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
-                                    tm = tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
-                                    println!("adjust text by: {} {:?}", i, tm);
+                                    ts.tm = ts.tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+                                    println!("adjust text by: {} {:?}", i, ts.tm);
                                 }
                                 &Object::Real(i) => {
+                                    let ts = &mut gs.ts;
                                     let w0 = 0.;
                                     let tj = i as f64;
                                     let ty = 0.;
                                     let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
-                                    tm = tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
-                                    println!("adjust text by: {} {:?}", i, tm);
+                                    ts.tm = ts.tm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
+                                    println!("adjust text by: {} {:?}", i, ts.tm);
                                 }
                                 _ => { println!("kind of {:?}", e);}
                             }
@@ -1050,7 +1053,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
             "Tj" => {
                 match operation.operands[0] {
                     Object::String(ref s, _) => {
-                        show_text(&gs.ts, s, &gs, &mut tm, &tlm, &flip_ctm, output);
+                        show_text(&mut gs, s, &tlm, &flip_ctm, output);
                     }
                     _ => { panic!("unexpected Tj operand {:?}", operation) }
                 }
@@ -1093,8 +1096,8 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                                                        as_num(&operation.operands[3]),
                                                        as_num(&operation.operands[4]),
                                                        as_num(&operation.operands[5]));
-                tm = tlm;
-                println!("Tm: matrix {:?}", tm);
+                gs.ts.tm = tlm;
+                println!("Tm: matrix {:?}", gs.ts.tm);
                 output.end_line();
 
             }
@@ -1109,8 +1112,8 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 println!("translation: {} {}", tx, ty);
 
                 tlm = tlm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
-                tm = tlm;
-                println!("Td matrix {:?}", tm);
+                gs.ts.tm = tlm;
+                println!("Td matrix {:?}", gs.ts.tm);
                 output.end_line();
 
             }
@@ -1119,8 +1122,8 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 let ty = gs.ts.leading;
 
                 tlm = tlm.pre_mul(&euclid::Transform2D::create_translation(tx, ty));
-                tm = tlm;
-                println!("Td matrix {:?}", tm);
+                gs.ts.tm = tlm;
+                println!("Td matrix {:?}", gs.ts.tm);
                 output.end_line();
             }
             "q" => { gs_stack.push(gs.clone()); }
@@ -1342,7 +1345,7 @@ impl<'a> OutputDev for PlainTextOutput<'a> {
     fn end_page(&mut self) {
     }
     fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str) {
-        println!("last_end: {} x: {}, width: {}", self.last_end, x, width);
+        //println!("last_end: {} x: {}, width: {}", self.last_end, x, width);
         if self.first_char {
             if (y - self.last_y).abs() > font_size * 1.5 {
                 write!(self.file, "\n");
