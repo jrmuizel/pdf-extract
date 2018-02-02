@@ -777,7 +777,9 @@ struct GraphicsState<'a>
     ts: TextState<'a>,
     smask: Option<&'a Dictionary>,
     fill_colorspace: ColorSpace,
+    fill_color: Vec<f64>,
     stroke_colorspace: ColorSpace,
+    stroke_color: Vec<f64>,
 }
 
 fn show_text(gs: &mut GraphicsState, s: &[u8],
@@ -987,7 +989,9 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
             rise: 0.,
             tm: Transform2D::identity(),
         },
+        fill_color: Vec::new(),
         fill_colorspace: ColorSpace::DeviceGray,
+        stroke_color: Vec::new(),
         stroke_colorspace: ColorSpace::DeviceGray,
         ctm: Transform2D::identity(),
         smask: None
@@ -1030,8 +1034,13 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                 let name = pdf_to_utf8(operation.operands[0].as_name().unwrap());
                 gs.fill_colorspace = make_colorspace(doc, name, resources);
             }
-            "SC" | "SCN" | "sc" | "scn" | "G" | "g" | "RG" | "rg" | "K" | "k" => {
-
+            "SC" | "SCN" => {
+                gs.stroke_color = operation.operands.iter().map(|x| as_num(x)).collect();
+            }
+            "sc" | "scn" => {
+                gs.fill_color = operation.operands.iter().map(|x| as_num(x)).collect();
+            }
+            "G" | "g" | "RG" | "rg" | "K" | "k" => {
                 println!("unhandled color operation {:?}", operation);
             }
             "TJ" => {
