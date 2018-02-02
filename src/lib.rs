@@ -1196,7 +1196,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                                            as_num(&operation.operands[2]),
                                            as_num(&operation.operands[3])))
             }
-            "f" => {
+            "F" | "f" => {
                 output.fill(&gs.ctm, &gs.fill_colorspace, &gs.fill_color, &path);
                 path.ops.clear();
             }
