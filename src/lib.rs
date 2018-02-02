@@ -881,14 +881,14 @@ impl Path {
 }
 
 #[derive(Clone)]
-struct CalGray {
+pub struct CalGray {
     white_point: [f64; 3],
     black_point: Option<[f64; 3]>,
     gamma: Option<f64>,
 }
 
 #[derive(Clone)]
-struct CalRGB {
+pub struct CalRGB {
     white_point: [f64; 3],
     black_point: Option<[f64; 3]>,
     gamma: Option<[f64; 3]>,
@@ -896,14 +896,14 @@ struct CalRGB {
 }
 
 #[derive(Clone)]
-struct Lab {
+pub struct Lab {
     white_point: [f64; 3],
     black_point: Option<[f64; 3]>,
     range: Option<[f64; 4]>,
 }
 
 #[derive(Clone)]
-enum ColorSpace {
+pub enum ColorSpace {
     DeviceGray,
     DeviceRGB,
     DeviceCMYK,
@@ -1197,7 +1197,7 @@ fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, med
                                            as_num(&operation.operands[3])))
             }
             "f" => {
-                output.fill(&gs.ctm, &path);
+                output.fill(&gs.ctm, &gs.fill_colorspace, &gs.fill_color, &path);
                 path.ops.clear();
             }
             "W" | "w*" => { println!("unhandled clipping operation {:?}", operation); }
@@ -1225,7 +1225,7 @@ pub trait OutputDev {
     fn begin_word(&mut self);
     fn end_word(&mut self);
     fn end_line(&mut self);
-    fn fill(&mut self, ctm: &Transform2D<f64>,  &Path) {}
+    fn fill(&mut self, ctm: &Transform2D<f64>, colorspace: &ColorSpace, color: &[f64], &Path) {}
 }
 
 
@@ -1309,7 +1309,7 @@ impl<'a> OutputDev for SVGOutput<'a> {
     fn begin_word(&mut self) {}
     fn end_word(&mut self) {}
     fn end_line(&mut self) {}
-    fn fill(&mut self, ctm: &Transform2D<f64>, path: &Path) {
+    fn fill(&mut self, ctm: &Transform2D<f64>, _colorspace: &ColorSpace, _color: &[f64], path: &Path) {
         write!(self.file, "<g transform='matrix({}, {}, {}, {}, {}, {})'>",
                ctm.m11,
                ctm.m12,
