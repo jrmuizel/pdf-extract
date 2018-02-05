@@ -275,6 +275,26 @@ fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Rc<PdfFont + 'a> {
     }
 }
 
+fn is_core_font(name: &str) -> bool {
+    match name {
+        "Courier-Bold" |
+        "Courier-BoldOblique" |
+        "Courier-Oblique" |
+        "Courier" |
+        "Helvetica-Bold" |
+        "Helvetica-BoldOblique" |
+        "Helvetica-Oblique" |
+        "Helvetica" |
+        "Symbol" |
+        "Times-Bold" |
+        "Times-BoldItalic" |
+        "Times-Italic" |
+        "Times-Roman" |
+        "ZapfDingbats" => true,
+        _ => false,
+    }
+}
+
 impl<'a> PdfBasicFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfBasicFont<'a> {
         let base_name = get_name(doc, font, "BaseFont");
@@ -370,7 +390,7 @@ impl<'a> PdfBasicFont<'a> {
         }
 
         let mut width_map = HashMap::new();
-        if base_name == "Times-Roman" {
+        if is_core_font(&base_name) {
             for font_metrics in metrics::metrics() {
                 if font_metrics.0 == base_name {
                     for w in font_metrics.1 {
