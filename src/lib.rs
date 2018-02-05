@@ -973,10 +973,8 @@ fn make_colorspace<'a>(doc: &'a Document, name: String, resources: &'a Dictionar
     }
 }
 
-fn process_stream(doc: &Document, contents: &Stream, resources: &Dictionary, media_box: &MediaBox, output: &mut OutputDev, page_num: u32) {
-    let data = get_contents(contents);
-    //println!("contents {}", pdf_to_utf8(&data));
-    let content = Content::decode(&data).unwrap();
+fn process_stream(doc: &Document, content: Vec<u8>, resources: &Dictionary, media_box: &MediaBox, output: &mut OutputDev, page_num: u32) {
+    let content = Content::decode(&content).unwrap();
     let mut font_table = HashMap::new();
     let mut gs: GraphicsState = GraphicsState {
         ts: TextState {
@@ -1431,45 +1429,24 @@ pub fn output_doc(doc: &Document, output: &mut OutputDev) {
     let pages = doc.get_pages();
     for dict in pages {
         let page_num = dict.0;
-        let dict = doc.get_object(dict.1).unwrap().as_dict().unwrap();
-        println!("page {} {:?}", page_num, dict);
-        let resources: &Dictionary = get(doc, dict, "Resources");
+        let page_dict = doc.get_object(dict.1).unwrap().as_dict().unwrap();
+        println!("page {} {:?}", page_num, page_dict);
+        let resources: &Dictionary = get(doc, page_dict, "Resources");
         println!("resources {:?}", resources);
 
         // pdfium searches up the page tree for MediaBoxes as needed
-        let media_box = get::<Option<Vec<f64>>>(doc, dict, "MediaBox")
+        let media_box = get::<Option<Vec<f64>>>(doc, page_dict, "MediaBox")
             .or_else(|| get::<Option<Vec<f64>>>(&doc, get_pages(&doc), "MediaBox"))
             .map(|media_box| MediaBox { llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3] })
             .expect("Should have been a MediaBox");
 
-        let art_box = get::<Option<Vec<f64>>>(&doc, dict, "ArtBox")
+        let art_box = get::<Option<Vec<f64>>>(&doc, page_dict, "ArtBox")
             .map(|x| (x[0], x[1], x[2], x[3]));
 
         output.begin_page(page_num, &media_box, art_box);
-        // Contents can point to either an array of references or a single reference
-        match dict.get("Contents") {
-            Some(&Object::Reference(ref id)) => {
-                match doc.get_object(*id).unwrap() {
-                    &Object::Stream(ref contents) => {
-                        process_stream(&doc, contents, resources, &media_box, output, page_num);
-                    }
 
-                    _ => {}
-                }
-            }
-            Some(&Object::Array(ref arr)) => {
-                for id in arr {
-                    let id = id.as_reference().unwrap();
-                    match doc.get_object(id).unwrap() {
-                        &Object::Stream(ref contents) => {
-                            process_stream(&doc, contents, resources, &media_box, output, page_num);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
+        process_stream(&doc, doc.get_page_content(dict.1).unwrap(), resources,&media_box, output, page_num);
+
         output.end_page();
     }
 }
