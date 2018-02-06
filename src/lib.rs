@@ -19,7 +19,7 @@ use std::fs::File;
 use std::slice::Iter;
 use std::collections::HashMap;
 use std::rc::Rc;
-mod metrics;
+mod core_fonts;
 mod glyphnames;
 mod encodings;
 
@@ -391,7 +391,7 @@ impl<'a> PdfSimpleFont<'a> {
 
         let mut width_map = HashMap::new();
         if is_core_font(&base_name) {
-            for font_metrics in metrics::metrics() {
+            for font_metrics in core_fonts::metrics() {
                 if font_metrics.0 == base_name {
                     for w in font_metrics.1 {
                         width_map.insert(w.0, w.1 as f64);
