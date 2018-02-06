@@ -255,7 +255,7 @@ fn maybe_get_array<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Op
 }
 
 #[derive(Clone)]
-struct PdfBasicFont<'a> {
+struct PdfSimpleFont<'a> {
     font: &'a Dictionary,
     doc: &'a Document,
     encoding: Option<Vec<u16>>,
@@ -271,7 +271,7 @@ fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Rc<PdfFont + 'a> {
     if subtype == "Type0" {
         Rc::new(PdfCIDFont::new(doc, font))
     } else {
-        Rc::new(PdfBasicFont::new(doc, font))
+        Rc::new(PdfSimpleFont::new(doc, font))
     }
 }
 
@@ -295,8 +295,8 @@ fn is_core_font(name: &str) -> bool {
     }
 }
 
-impl<'a> PdfBasicFont<'a> {
-    fn new(doc: &'a Document, font: &'a Dictionary) -> PdfBasicFont<'a> {
+impl<'a> PdfSimpleFont<'a> {
+    fn new(doc: &'a Document, font: &'a Dictionary) -> PdfSimpleFont<'a> {
         let base_name = get_name(doc, font, "BaseFont");
         let subtype = get_name(doc, font, "Subtype");
 
@@ -415,7 +415,7 @@ impl<'a> PdfBasicFont<'a> {
             assert_eq!(first_char + i - 1, last_char);
         }
 
-        PdfBasicFont{doc, font, widths: width_map, encoding: encoding_table, default_width: None, unicode_map}
+        PdfSimpleFont {doc, font, widths: width_map, encoding: encoding_table, default_width: None, unicode_map}
     }
 
     fn get_encoding(&self) -> &'a Object {
@@ -483,7 +483,7 @@ impl<'a> PdfFont + 'a {
 }
 
 
-impl<'a> PdfFont for PdfBasicFont<'a> {
+impl<'a> PdfFont for PdfSimpleFont<'a> {
     fn get_width(&self, id: i64) -> f64 {
         let width = self.widths.get(&id);
         if let Some(width) = width {
@@ -522,7 +522,7 @@ impl<'a> PdfFont for PdfBasicFont<'a> {
 
 
 
-impl<'a> fmt::Debug for PdfBasicFont<'a> {
+impl<'a> fmt::Debug for PdfSimpleFont<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.font.fmt(f)
     }
