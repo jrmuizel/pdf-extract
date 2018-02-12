@@ -352,6 +352,7 @@ impl<'a> PdfSimpleFont<'a> {
                 let mut table = Vec::from(PDFDocEncoding);
                 let differences = maybe_get_array(doc, encoding, "Differences");
                 if let Some(differences) = differences {
+                    println!("Differences");
                     let mut code = 0;
                     for o in differences {
                         match o {
@@ -393,8 +394,14 @@ impl<'a> PdfSimpleFont<'a> {
         if is_core_font(&base_name) {
             for font_metrics in core_fonts::metrics() {
                 if font_metrics.0 == base_name {
-                    for w in font_metrics.1 {
+                    let encoding = encoding_table.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
+                    for w in font_metrics.2 {
                         width_map.insert(w.0, w.1 as f64);
+
+                        if (encoding[w.0 as usize] != glyphnames::name_to_unicode(w.2).unwrap()) {
+                            println!("{} {} {}", w.2, encoding[w.0 as usize], glyphnames::name_to_unicode(w.2).unwrap());
+                            panic!()
+                        }
                     }
                     assert!(maybe_get_obj(doc, font, "FirstChar").is_none());
                     assert!(maybe_get_obj(doc, font, "LastChar").is_none());
