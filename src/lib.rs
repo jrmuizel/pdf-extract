@@ -392,7 +392,7 @@ impl<'a> PdfSimpleFont<'a> {
 
         let mut width_map = HashMap::new();
         if is_core_font(&base_name) {
-            for font_metrics in core_fonts::metrics() {
+            for font_metrics in core_fonts::metrics().iter() {
                 if font_metrics.0 == base_name {
                     let encoding = encoding_table.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
                     for w in font_metrics.2 {
