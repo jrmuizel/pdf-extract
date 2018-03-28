@@ -31,5 +31,5 @@ fn main() {
         _ => panic!(),
     };
 
-    output_doc(&doc, &mut *output);
+    output_doc(&doc, output.as_mut());
 }
