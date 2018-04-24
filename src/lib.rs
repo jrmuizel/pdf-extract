@@ -394,13 +394,36 @@ impl<'a> PdfSimpleFont<'a> {
         if is_core_font(&base_name) {
             for font_metrics in core_fonts::metrics().iter() {
                 if font_metrics.0 == base_name {
-                    let encoding = encoding_table.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
-                    for w in font_metrics.2 {
-                        width_map.insert(w.0, w.1 as f64);
+                    if let Some(ref encoding) = encoding_table {
+                        println!("has encoding");
+                        for w in font_metrics.2 {
+                            let c = glyphnames::name_to_unicode(w.2).unwrap();
+                            for i in 0..encoding.len() {
+                                if encoding[i] == c {
+                                    width_map.insert(i as i64, w.1 as f64);
+                                }
+                            }
+                        }
+                    } else {
+                        if font_metrics.1 == "FontSpecific" {
+                            let mut table = vec![0; 256];
+                            for w in font_metrics.2 {
+                                println!("{} {}", w.0, w.2);
+                                if w.0 > 0 {
+                                    table[w.0 as usize] = glyphnames::name_to_unicode(w.2).unwrap()
+                                }
+                            }
+                            encoding_table = Some(table);
+                        }
 
-                        if (encoding[w.0 as usize] != glyphnames::name_to_unicode(w.2).unwrap()) {
-                            println!("{} {} {}", w.2, encoding[w.0 as usize], glyphnames::name_to_unicode(w.2).unwrap());
-                            panic!()
+                        let encoding = encoding_table.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
+                        for w in font_metrics.2 {
+                            width_map.insert(w.0, w.1 as f64);
+
+                            if (w.0 > 0 && encoding[w.0 as usize] != glyphnames::name_to_unicode(w.2).unwrap()) {
+                                println!("{} {} {}", w.2, encoding[w.0 as usize], glyphnames::name_to_unicode(w.2).unwrap());
+                                panic!()
+                            }
                         }
                     }
                     assert!(maybe_get_obj(doc, font, "FirstChar").is_none());
@@ -496,7 +519,7 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
         if let Some(width) = width {
             return *width;
         } else {
-            println!("missing width for {} falling back to default_width", id);
+            println!("missing width for {} falling back to default_width {:?}", id, self.font);
             return self.default_width.unwrap();
         }
     }
