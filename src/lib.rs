@@ -260,7 +260,7 @@ struct PdfSimpleFont<'a> {
     doc: &'a Document,
     encoding: Option<Vec<u16>>,
     unicode_map: Option<HashMap<u32, u32>>,
-    widths: HashMap<i64, f64>, // should probably just use i32 here
+    widths: HashMap<CharCode, f64>, // should probably just use i32 here
     default_width: Option<f64>, // only used for CID fonts and we should probably brake out the different font types
 }
 
@@ -400,7 +400,7 @@ impl<'a> PdfSimpleFont<'a> {
                             let c = glyphnames::name_to_unicode(w.2).unwrap();
                             for i in 0..encoding.len() {
                                 if encoding[i] == c {
-                                    width_map.insert(i as i64, w.1 as f64);
+                                    width_map.insert(i as CharCode, w.1 as f64);
                                 }
                             }
                         }
@@ -418,7 +418,7 @@ impl<'a> PdfSimpleFont<'a> {
 
                         let encoding = encoding_table.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
                         for w in font_metrics.2 {
-                            width_map.insert(w.0, w.1 as f64);
+                            width_map.insert(w.0 as CharCode, w.1 as f64);
 
                             if (w.0 > 0 && encoding[w.0 as usize] != glyphnames::name_to_unicode(w.2).unwrap()) {
                                 println!("{} {} {}", w.2, encoding[w.0 as usize], glyphnames::name_to_unicode(w.2).unwrap());
@@ -439,7 +439,7 @@ impl<'a> PdfSimpleFont<'a> {
             println!("first_char {:?}, last_char: {:?}, widths: {} {:?}", first_char, last_char, widths.len(), widths);
 
             for w in widths {
-                width_map.insert((first_char + i), w);
+                width_map.insert((first_char + i) as CharCode, w);
                 i += 1;
             }
             assert_eq!(first_char + i - 1, last_char);
@@ -490,7 +490,7 @@ impl<'a> Iterator for PdfFontIter<'a> {
 }
 
 trait PdfFont : Debug {
-    fn get_width(&self, id: i64) -> f64;
+    fn get_width(&self, id: CharCode) -> f64;
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<CharCode>;
     fn decode_char(&self, char: CharCode) -> String;
 
@@ -514,7 +514,7 @@ impl<'a> PdfFont + 'a {
 
 
 impl<'a> PdfFont for PdfSimpleFont<'a> {
-    fn get_width(&self, id: i64) -> f64 {
+    fn get_width(&self, id: CharCode) -> f64 {
         let width = self.widths.get(&id);
         if let Some(width) = width {
             return *width;
@@ -563,7 +563,7 @@ struct PdfCIDFont<'a> {
     doc: &'a Document,
     encoding: Option<Vec<u16>>,
     to_unicode: Option<HashMap<u32, u32>>,
-    widths: HashMap<i64, f64>, // should probably just use i32 here
+    widths: HashMap<CharCode, f64>, // should probably just use i32 here
     default_width: Option<f64>, // only used for CID fonts and we should probably brake out the different font types
 }
 
@@ -625,7 +625,7 @@ impl<'a> PdfCIDFont<'a> {
                 let mut j = 0;
                 println!("wa: {:?} -> {:?}", cid, wa);
                 for w in wa {
-                    widths.insert(cid + j, as_num(w) );
+                    widths.insert((cid + j) as CharCode, as_num(w) );
                     j += 1;
                 }
                 i += 2;
@@ -634,7 +634,7 @@ impl<'a> PdfCIDFont<'a> {
                 let c_last = w[i].as_i64().expect("last should be num");
                 let c_width = as_num(&w[i]);
                 for id in c_first..c_last {
-                    widths.insert(id, c_width);
+                    widths.insert(id as CharCode, c_width);
                 }
                 i += 3;
             }
@@ -644,7 +644,7 @@ impl<'a> PdfCIDFont<'a> {
 }
 
 impl<'a> PdfFont for PdfCIDFont<'a> {
-    fn get_width(&self, id: i64) -> f64 {
+    fn get_width(&self, id: CharCode) -> f64 {
         let width = self.widths.get(&id);
         if let Some(width) = width {
             println!("GetWidth {} -> {}", id, *width);
@@ -857,7 +857,7 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
 
 
         //println!("w: {}", font.widths[&(*c as i64)]);
-        let w0 = font.get_width(c as i64) / 1000.;
+        let w0 = font.get_width(c) / 1000.;
         let transformed_font_size_vec = trm.transform_vector(&vec2(ts.font_size, ts.font_size));
         // get the length of one sized of the square with the same area with a rectangle of size (x, y)
         let transformed_font_size = (transformed_font_size_vec.x*transformed_font_size_vec.y).sqrt();
