@@ -385,6 +385,10 @@ impl<'a> PdfSimpleFont<'a> {
                         }
                     }
                     encoding_table = Some(table)
+                } else if subtype == "TrueType" {
+                    encoding_table = Some(encodings::WIN_ANSI_ENCODING.iter()
+                        .map(|x| if let &Some(x) = x { glyphnames::name_to_unicode(x).unwrap() } else { 0 })
+                        .collect());
                 }
             }
             _ => { panic!() }
@@ -409,7 +413,8 @@ impl<'a> PdfSimpleFont<'a> {
                             let mut table = vec![0; 256];
                             for w in font_metrics.2 {
                                 println!("{} {}", w.0, w.2);
-                                if w.0 > 0 {
+                                // -1 is "not encoded"
+                                if w.0 != -1 {
                                     table[w.0 as usize] = glyphnames::name_to_unicode(w.2).unwrap()
                                 }
                             }
@@ -419,8 +424,8 @@ impl<'a> PdfSimpleFont<'a> {
                         let encoding = encoding_table.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
                         for w in font_metrics.2 {
                             width_map.insert(w.0 as CharCode, w.1 as f64);
-
-                            if (w.0 > 0 && encoding[w.0 as usize] != glyphnames::name_to_unicode(w.2).unwrap()) {
+                            // -1 is "not encoded"
+                            if (w.0 != -1 && encoding[w.0 as usize] != glyphnames::name_to_unicode(w.2).unwrap()) {
                                 println!("{} {} {}", w.2, encoding[w.0 as usize], glyphnames::name_to_unicode(w.2).unwrap());
                                 panic!()
                             }
@@ -1157,7 +1162,7 @@ fn process_stream(doc: &Document, content: Vec<u8>, resources: &Dictionary, medi
                 gs.ts.font = Some(font);
 
                 gs.ts.font_size = as_num(&operation.operands[1]);
-                println!("font size: {} {:?}", gs.ts.font_size, operation);
+                println!("font {} size: {} {:?}", name, gs.ts.font_size, operation);
             }
             "Ts" => {
                 gs.ts.rise = as_num(&operation.operands[0]);
