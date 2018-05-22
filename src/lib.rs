@@ -1234,7 +1234,8 @@ fn process_stream(doc: &Document, content: Vec<u8>, resources: &Dictionary, medi
                 let state: &Dictionary = get(doc, ext_gstate, &name.clone());
                 apply_state(&mut gs, state);
             }
-            "w" | "J" | "j" | "M" | "d" | "ri" | "i" => { println!("unknown graphics state operator {:?}", operation); }
+            "i" => { println!("unhandled graphics state flattness operator {:?}", operation); }
+            "w" | "J" | "j" | "M" | "d" | "ri" => { println!("unknown graphics state operator {:?}", operation); }
             "m" => { path.ops.push(PathOp::MoveTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) }
             "l" => { path.ops.push(PathOp::LineTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) }
             "c" => { path.ops.push(PathOp::CurveTo(
