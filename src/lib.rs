@@ -1459,6 +1459,8 @@ impl<'a> OutputDev for PlainTextOutput<'a> {
             if (y - self.last_y).abs() > font_size * 1.5 {
                 write!(self.file, "\n");
             }
+
+            // we've moved to the left and down
             if x < self.last_end && (y - self.last_y).abs() > font_size * 0.5 {
                 write!(self.file, "\n");
             }
