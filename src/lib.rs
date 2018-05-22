@@ -1146,6 +1146,10 @@ fn process_stream(doc: &Document, content: Vec<u8>, resources: &Dictionary, medi
             "Tz" => {
                 gs.ts.horizontal_scaling = as_num(&operation.operands[0]) / 100.;
             }
+            "TL" => {
+                gs.ts.leading = as_num(&operation.operands[0]);
+                panic!("should this be negative?");
+            }
             "Tf" => {
                 let fonts: &Dictionary = get(&doc, resources, "Font");
                 let name = str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap();
@@ -1196,13 +1200,30 @@ fn process_stream(doc: &Document, content: Vec<u8>, resources: &Dictionary, medi
                 output.end_line();
 
             }
+
+            "TD" => {
+                /* Move to the start of the next line, offset from the start of the current line by (tx , ty ).
+                   As a side effect, this operator sets the leading parameter in the text state.
+                 */
+                assert!(operation.operands.len() == 2);
+                let tx = as_num(&operation.operands[0]);
+                let ty = as_num(&operation.operands[1]);
+                println!("translation: {} {}", tx, ty);
+                gs.ts.leading = ty;
+
+                tlm = tlm.pre_mul(&Transform2D::create_translation(tx, ty));
+                gs.ts.tm = tlm;
+                println!("TD matrix {:?}", gs.ts.tm);
+                output.end_line();
+            }
+
             "T*" => {
                 let tx = 0.0;
                 let ty = gs.ts.leading;
 
                 tlm = tlm.pre_mul(&Transform2D::create_translation(tx, ty));
                 gs.ts.tm = tlm;
-                println!("Td matrix {:?}", gs.ts.tm);
+                println!("T* matrix {:?}", gs.ts.tm);
                 output.end_line();
             }
             "q" => { gs_stack.push(gs.clone()); }
