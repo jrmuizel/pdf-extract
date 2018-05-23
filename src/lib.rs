@@ -295,6 +295,12 @@ fn is_core_font(name: &str) -> bool {
     }
 }
 
+/* "Glyphs in the font are selected by single-byte character codes obtained from a string that
+    is shown by the text-showing operators. Logically, these codes index into a table of 256
+    glyphs; the mapping from codes to glyphs is called the font’s encoding. Each font program
+    has a built-in encoding. Under some circumstances, the encoding can be altered by means
+    described in Section 5.5.5, “Character Encoding.”
+*/
 impl<'a> PdfSimpleFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfSimpleFont<'a> {
         let base_name = get_name(doc, font, "BaseFont");
@@ -480,6 +486,7 @@ impl<'a> PdfSimpleFont<'a> {
 }
 
 type CharCode = u32;
+type CID = u32;
 
 struct PdfFontIter<'a>
 {
@@ -488,15 +495,15 @@ struct PdfFontIter<'a>
 }
 
 impl<'a> Iterator for PdfFontIter<'a> {
-    type Item = CharCode;
-    fn next(&mut self) -> Option<CharCode> {
+    type Item = (CharCode, u8);
+    fn next(&mut self) -> Option<(CharCode, u8)> {
         self.font.next_char(&mut self.i)
     }
 }
 
 trait PdfFont : Debug {
     fn get_width(&self, id: CharCode) -> f64;
-    fn next_char(&self, iter: &mut Iter<u8>) -> Option<CharCode>;
+    fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)>;
     fn decode_char(&self, char: CharCode) -> String;
 
         /*fn char_codes<'a>(&'a self, chars: &'a [u8]) -> PdfFontIter {
@@ -511,7 +518,7 @@ impl<'a> PdfFont + 'a {
         PdfFontIter{i: chars.iter(), font: self}
     }
     fn decode(&self, chars: &[u8]) -> String {
-        let strings = self.char_codes(chars).map(|x| self.decode_char(x)).collect::<Vec<_>>();
+        let strings = self.char_codes(chars).map(|x| self.decode_char(x.0)).collect::<Vec<_>>();
         strings.join("")
     }
 
@@ -533,8 +540,8 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
         to_utf8(encoding, chars)
     }*/
 
-    fn next_char(&self, iter: &mut Iter<u8>) -> Option<CharCode> {
-        iter.next().map(|x| *x as CharCode)
+    fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)> {
+        iter.next().map(|x| (*x as CharCode, 1))
     }
     fn decode_char(&self, char: CharCode) -> String {
         let slice = [char as u8];
@@ -668,11 +675,11 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
         to_utf8(encoding, chars)
     }*/
 
-    fn next_char(&self, iter: &mut Iter<u8>) -> Option<CharCode> {
+    fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)> {
         let p = iter.next();
         if let Some(&c) = p {
             let next = *iter.next().unwrap();
-            Some(((c as u32) << 8)  | next as u32)
+            Some((((c as u32) << 8)  | next as u32, 2))
         } else {
             None
         }
@@ -847,7 +854,7 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
     println!("{:?}", font.decode(s));
     output.begin_word();
 
-    for c in font.char_codes(s) {
+    for (c, length) in font.char_codes(s) {
         let tsm = Transform2D::row_major(ts.font_size * ts.horizontal_scaling,
                                                  0.,
                                                  0.,
@@ -863,13 +870,21 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
 
         //println!("w: {}", font.widths[&(*c as i64)]);
         let w0 = font.get_width(c) / 1000.;
+
+        // "Word spacing is applied to every occurrence of the single-byte character code 32 in a
+        //  string when using a simple font or a composite font that defines code 32 as a
+        //  single-byte code. It does not apply to occurrences of the byte value 32 in
+        //  multiple-byte codes."
+        let is_space = c == 32 && length == 1;
+
         let transformed_font_size_vec = trm.transform_vector(&vec2(ts.font_size, ts.font_size));
         // get the length of one sized of the square with the same area with a rectangle of size (x, y)
         let transformed_font_size = (transformed_font_size_vec.x*transformed_font_size_vec.y).sqrt();
         output.output_character(position.m31, position.m32, w0, transformed_font_size, &font.decode_char(c));
         let tj = 0.;
         let ty = 0.;
-        let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
+        let spacing = if is_space { ts.word_spacing } else { ts.character_spacing };
+        let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + spacing);
         // println!("w0: {}, tx: {}", w0, tx);
         ts.tm = ts.tm.pre_mul(&Transform2D::create_translation(tx, ty));
         let trm = ts.tm.pre_mul(&gs.ctm);
@@ -1109,7 +1124,7 @@ fn process_stream(doc: &Document, content: Vec<u8>, resources: &Dictionary, medi
                                     let w0 = 0.;
                                     let tj = i as f64;
                                     let ty = 0.;
-                                    let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
+                                    let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size);
                                     ts.tm = ts.tm.pre_mul(&Transform2D::create_translation(tx, ty));
                                     println!("adjust text by: {} {:?}", i, ts.tm);
                                 }
@@ -1118,7 +1133,7 @@ fn process_stream(doc: &Document, content: Vec<u8>, resources: &Dictionary, medi
                                     let w0 = 0.;
                                     let tj = i as f64;
                                     let ty = 0.;
-                                    let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + ts.word_spacing + ts.character_spacing);
+                                    let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size);
                                     ts.tm = ts.tm.pre_mul(&Transform2D::create_translation(tx, ty));
                                     println!("adjust text by: {} {:?}", i, ts.tm);
                                 }
