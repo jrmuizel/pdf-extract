@@ -1453,45 +1453,81 @@ impl<'a> OutputDev for SVGOutput<'a> {
     }
 }
 
-pub struct PlainTextOutput<'a>  {
-    file: &'a mut File,
+/*
+File doesn't implement std::fmt::Write so we have
+to do some gymnastics to accept a File or String
+See https://github.com/rust-lang/rust/issues/51305
+*/
+
+pub trait ConvertToFmt {
+    type Writer: std::fmt::Write;
+    fn convert(self) -> Self::Writer;
+}
+
+impl<'a> ConvertToFmt for &'a mut String {
+    type Writer = &'a mut String;
+    fn convert(self) -> Self::Writer {
+        self
+    }
+}
+
+pub struct WriteAdapter<W> {
+    f: W,
+}
+
+impl<W: std::io::Write> std::fmt::Write for WriteAdapter<W> {
+    fn write_str(&mut self, s: &str) -> Result<(), std::fmt::Error> {
+        self.f.write_all(s.as_bytes()).map_err(|_| fmt::Error)
+    }
+}
+
+impl<'a> ConvertToFmt for &'a mut File {
+    type Writer = WriteAdapter<Self>;
+    fn convert(self) -> Self::Writer {
+        WriteAdapter { f: self }
+    }
+}
+
+pub struct PlainTextOutput<W: ConvertToFmt>   {
+    writer: W::Writer,
     last_end: f64,
     last_y: f64,
     first_char: bool
 }
 
-impl<'a> PlainTextOutput<'a> {
-    pub fn new(file: &mut File) -> PlainTextOutput {
-        PlainTextOutput{file, last_end: 100000., first_char: false, last_y: 0.}
+impl<W: ConvertToFmt> PlainTextOutput<W> {
+    pub fn new(writer: W) -> PlainTextOutput<W> {
+        PlainTextOutput{ writer: writer.convert(), last_end: 100000., first_char: false, last_y: 0.}
     }
 }
 
 /* There are some structural hints that PDFs can use to signal word and line endings:
  * however relying on these is not likely to be sufficient. */
-impl<'a> OutputDev for PlainTextOutput<'a> {
+impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
     fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, _: Option<ArtBox>) {
     }
     fn end_page(&mut self) {
     }
     fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str) {
+        use std::fmt::Write;
         //dlog!("last_end: {} x: {}, width: {}", self.last_end, x, width);
         if self.first_char {
             if (y - self.last_y).abs() > font_size * 1.5 {
-                write!(self.file, "\n");
+                write!(self.writer, "\n");
             }
 
             // we've moved to the left and down
             if x < self.last_end && (y - self.last_y).abs() > font_size * 0.5 {
-                write!(self.file, "\n");
+                write!(self.writer, "\n");
             }
 
             if x > self.last_end + font_size * 0.1 {
                 dlog!("width: {}, space: {}, thresh: {}", width, x - self.last_end, font_size * 0.1);
-                write!(self.file, " ");
+                write!(self.writer, " ");
             }
         }
         //let norm = unicode_normalization::UnicodeNormalization::nfkc(char);
-        write!(self.file, "{}", char);
+        write!(self.writer, "{}", char);
         self.first_char = false;
         self.last_y = y;
         self.last_end = x + width * font_size;
@@ -1521,6 +1557,16 @@ pub fn print_metadata(doc: &Document) {
     dlog!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
 }
 
+
+pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<String, std::io::Error> {
+    let mut s = String::new();
+    {
+        let mut output = PlainTextOutput::new(&mut s);
+        let doc = Document::load(path)?;
+        output_doc(&doc, &mut output);
+    }
+    return Ok(s);
+}
 
 /// Parse a given document and output it to `output`
 pub fn output_doc(doc: &Document, output: &mut OutputDev) {
