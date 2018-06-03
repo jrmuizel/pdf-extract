@@ -1557,7 +1557,7 @@ pub fn print_metadata(doc: &Document) {
     dlog!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
 }
 
-
+/// Extract the text from a pdf at `path` and return a `String` with the results
 pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<String, std::io::Error> {
     let mut s = String::new();
     {
