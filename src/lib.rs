@@ -19,6 +19,7 @@ use std::fs::File;
 use std::slice::Iter;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::path;
 mod core_fonts;
 mod glyphnames;
 mod encodings;
@@ -1541,6 +1542,63 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
     }
 }
 
+pub struct StringOutput<'a>  {
+    string: &'a mut String,
+    last_end: f64,
+    last_y: f64,
+    first_char: bool
+}
+
+impl<'a> StringOutput<'a> {
+    pub fn new(string: &mut String) -> StringOutput {
+        StringOutput{string, last_end: 100000., first_char: false, last_y: 0.}
+    }
+}
+
+
+impl<'a> OutputDev for StringOutput<'a> {
+    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, _: Option<ArtBox>) {
+    }
+    fn end_page(&mut self) {
+    }
+    fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str) {
+
+        if self.first_char {
+            if (y - self.last_y).abs() > font_size * 1.5 {
+                self.string.push('\n');
+            }
+            // we've moved to the left and down
+            if x < self.last_end && (y - self.last_y).abs() > font_size * 0.5 {
+                self.string.push('\n');
+            }
+
+            if x > self.last_end + font_size * 0.1 {
+                dlog!("width: {}, space: {}, thresh: {}", width, x - self.last_end, font_size * 0.1);
+                self.string.push(' ');
+            }
+        }
+        self.string.push_str(char);
+        self.first_char = false;
+        self.last_y = y;
+        self.last_end = x + width * font_size;
+    }
+    fn begin_word(&mut self) {
+        self.first_char = true;
+    }
+    fn end_word(&mut self) {}
+    fn end_line(&mut self) {}
+}
+
+pub fn extract_text(pdf_filename: &str) -> Result<String, std::io::Error> {
+    let mut s = String::new();
+    {
+        let path = path::Path::new(&pdf_filename);
+        let doc = Document::load(path).unwrap();
+        let mut output = Box::new(StringOutput::new(&mut s));
+        output_doc(&doc, output.as_mut());
+    }
+    return Ok(s);
+}
 
 pub fn print_metadata(doc: &Document) {
     dlog!("Version: {}", doc.version);
