@@ -1481,6 +1481,13 @@ impl<W: std::io::Write> std::fmt::Write for WriteAdapter<W> {
     }
 }
 
+impl<'a> ConvertToFmt for &'a mut std::io::Write {
+    type Writer = WriteAdapter<Self>;
+    fn convert(self) -> Self::Writer {
+        WriteAdapter { f: self }
+    }
+}
+
 impl<'a> ConvertToFmt for &'a mut File {
     type Writer = WriteAdapter<Self>;
     fn convert(self) -> Self::Writer {
