@@ -9,7 +9,7 @@ keywords = ["pdf2text", "text", "pdf", "pdf2txt"]
 repository = "https://github.com/jrmuizel/pdf-extract"
 
 [dependencies]
-adobe-cmap-parser = "0.2.0"
+adobe-cmap-parser = "0.3.2"
 encoding = "0.2.33"
 euclid = "0.15.1"
 flate2 = "0.2.17"

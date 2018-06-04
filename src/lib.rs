@@ -264,7 +264,7 @@ struct PdfSimpleFont<'a> {
     font: &'a Dictionary,
     doc: &'a Document,
     encoding: Option<Vec<u16>>,
-    unicode_map: Option<HashMap<u32, u32>>,
+    unicode_map: Option<HashMap<u32, String>>,
     widths: HashMap<CharCode, f64>, // should probably just use i32 here
     default_width: Option<f64>, // only used for CID fonts and we should probably brake out the different font types
 }
@@ -372,6 +372,10 @@ impl<'a> PdfSimpleFont<'a> {
                                 let name = pdf_to_utf8(&n);
                                 let unicode = glyphnames::name_to_unicode(&name).unwrap();
                                 table[code as usize] = unicode;
+                                dlog!("{} = {} ({})", code, name, unicode);
+                                if let Some(ref unicode_map) = unicode_map {
+                                    dlog!("{} {}", code, unicode_map[&(code as u32)]);
+                                }
                                 code += 1;
                             }
                             _ => { panic!("wrong type"); }
@@ -420,19 +424,20 @@ impl<'a> PdfSimpleFont<'a> {
                             }
                         }
                     } else {
-                        if font_metrics.1 == "FontSpecific" {
-                            let mut table = vec![0; 256];
-                            for w in font_metrics.2 {
-                                dlog!("{} {}", w.0, w.2);
-                                // -1 is "not encoded"
-                                if w.0 != -1 {
-                                    table[w.0 as usize] = glyphnames::name_to_unicode(w.2).unwrap()
-                                }
+                        // Instead of using the encoding from the core font we'll just look up all
+                        // of the character names. We should probably verify that this produces the
+                        // same result.
+
+                        let mut table = vec![0; 256];
+                        for w in font_metrics.2 {
+                            dlog!("{} {}", w.0, w.2);
+                            // -1 is "not encoded"
+                            if w.0 != -1 {
+                                table[w.0 as usize] = glyphnames::name_to_unicode(w.2).unwrap()
                             }
-                            encoding_table = Some(table);
                         }
 
-                        let encoding = encoding_table.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
+                        let encoding = &table[..];
                         for w in font_metrics.2 {
                             width_map.insert(w.0 as CharCode, w.1 as f64);
                             // -1 is "not encoded"
@@ -554,10 +559,8 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
             let s = unicode_map.get(&char);
             let s = match s {
                 None => { panic!("missing char {:?} in map {:?}", char, unicode_map)}
-                Some(s) => { *s }
+                Some(s) => { s.clone() }
             };
-            let s = [s as u16];
-            let s = String::from_utf16(&s).unwrap();
             return s
         }
         let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
@@ -579,20 +582,39 @@ struct PdfCIDFont<'a> {
     font: &'a Dictionary,
     doc: &'a Document,
     encoding: Option<Vec<u16>>,
-    to_unicode: Option<HashMap<u32, u32>>,
+    to_unicode: Option<HashMap<u32, String>>,
     widths: HashMap<CharCode, f64>, // should probably just use i32 here
     default_width: Option<f64>, // only used for CID fonts and we should probably brake out the different font types
 }
 
-fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMap<u32, u32>> {
+fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMap<u32, String>> {
     let to_unicode = maybe_get_obj(doc, font, "ToUnicode");
-    //dlog!("ToUnicode: {:?}", to_unicode);
+    dlog!("ToUnicode: {:?}", to_unicode);
     let mut unicode_map = None;
     match to_unicode {
         Some(&Object::Stream(ref stream)) => {
             let contents = get_contents(stream);
-            unicode_map = Some(adobe_cmap_parser::get_unicode_map(&contents).unwrap());
-            dlog!("Stream: {:?} {:?}", unicode_map, contents);
+            dlog!("Stream: {}", String::from_utf8(contents.clone()).unwrap());
+
+            let cmap = adobe_cmap_parser::get_unicode_map(&contents).unwrap();
+            let mut unicode = HashMap::new();
+            // "It must use the beginbfchar, endbfchar, beginbfrange, and endbfrange operators to
+            // define the mapping from character codes to Unicode character sequences expressed in
+            // UTF-16BE encoding."
+            for (&k, v) in cmap.iter() {
+                let mut be: Vec<u16> = Vec::new();
+                let mut i = 0;
+                assert!(v.len() % 2 == 0);
+                while i < v.len() {
+                    be.push(((v[i] as u16) << 8) | v[i+1] as u16);
+                    i += 2;
+                }
+                let s = String::from_utf16(&be).unwrap();
+                unicode.insert(k, s);
+            }
+            unicode_map = Some(unicode);
+
+            dlog!("map: {:?}", unicode_map);
         }
         None => { }
         _ => { panic!("unsupported cmap")}
@@ -692,9 +714,7 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
     fn decode_char(&self, char: CharCode) -> String {
         let s = self.to_unicode.as_ref().and_then(|x| x.get(&char));
         if let Some(s) = s {
-            let s = [*s as u16];
-            let s = String::from_utf16(&s).unwrap();
-            s
+            s.clone()
         } else {
             dlog!("Unknown character {:?} in {:?}", char, self.font);
             "".to_string()
@@ -857,6 +877,8 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
     let font = ts.font.as_ref().unwrap();
     //let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
     dlog!("{:?}", font.decode(s));
+    dlog!("{:?}", font.decode(s).as_bytes());
+    dlog!("{:?}", s);
     output.begin_word();
 
     for (c, length) in font.char_codes(s) {
