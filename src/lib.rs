@@ -384,8 +384,12 @@ impl<'a> PdfSimpleFont<'a> {
                             &Object::Integer(i) => { code = i; },
                             &Object::Name(ref n) => {
                                 let name = pdf_to_utf8(&n);
-                                let unicode = glyphnames::name_to_unicode(&name).unwrap();
-                                table[code as usize] = unicode;
+                                // XXX: names of Type1 fonts can map to arbitrary strings instead of real
+                                // unicode names, so we should probably handle this differently
+                                let unicode = glyphnames::name_to_unicode(&name);
+                                if let Some(unicode) = unicode{
+                                    table[code as usize] = unicode;
+                                }
                                 dlog!("{} = {} ({})", code, name, unicode);
                                 if let Some(ref unicode_map) = unicode_map {
                                     dlog!("{} {}", code, unicode_map[&(code as u32)]);
@@ -954,7 +958,7 @@ fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
                         panic!("unexpected smask name")
                     }
                 }
-                _ => { panic!("unexpected smask type") }
+                _ => { panic!("unexpected smask type {:?}", k) }
             }}
             _ => {  dlog!("unapplied state: {:?} {:?}", k, v); }
         }
