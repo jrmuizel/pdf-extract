@@ -774,6 +774,7 @@ impl<'a> fmt::Debug for PdfFontDescriptor<'a> {
     }
 }
 
+#[derive(Clone)]
 struct Type0Func {
     domain: Vec<f64>,
     range: Vec<f64>,
@@ -803,6 +804,7 @@ impl Type0Func {
     }
 }
 
+#[derive(Clone)]
 enum Function {
     Type0(Type0Func),
     Type1,
@@ -1023,6 +1025,13 @@ pub struct Lab {
 }
 
 #[derive(Clone)]
+pub struct Separation {
+    name: String,
+    alternate_space: String,
+    tint_transform: Box<Function>,
+}
+
+#[derive(Clone)]
 pub enum ColorSpace {
     DeviceGray,
     DeviceRGB,
@@ -1031,7 +1040,7 @@ pub enum ColorSpace {
     CalRGB(CalRGB),
     CalGray(CalGray),
     Lab(Lab),
-    Separation,
+    Separation(Separation),
     ICCBased(Vec<u8>)
 }
 
@@ -1049,10 +1058,10 @@ fn make_colorspace<'a>(doc: &'a Document, name: String, resources: &'a Dictionar
                 "Separation" => {
                     let name = pdf_to_utf8(cs[1].as_name().expect("second arg must be a name"));
                     let alternate_space = pdf_to_utf8(cs[2].as_name().expect("second arg must be a name"));
-                    let tint_transform = maybe_deref(doc, &cs[3]);
+                    let tint_transform = Box::new(Function::new(doc, maybe_deref(doc, &cs[3])));
 
                     dlog!("{:?} {:?} {:?}", name, alternate_space, tint_transform);
-                    panic!()
+                    ColorSpace::Separation(Separation{ name, alternate_space, tint_transform})
                 }
                 "ICCBased" => {
                     let stream = maybe_deref(doc, &cs[1]).as_stream().unwrap();
