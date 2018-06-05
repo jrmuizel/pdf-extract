@@ -391,7 +391,7 @@ impl<'a> PdfSimpleFont<'a> {
                                 if let Some(unicode) = unicode{
                                     table[code as usize] = unicode;
                                 }
-                                dlog!("{} = {} ({})", code, name, unicode);
+                                dlog!("{} = {} ({:?})", code, name, unicode);
                                 if let Some(ref unicode_map) = unicode_map {
                                     dlog!("{} {}", code, unicode_map[&(code as u32)]);
                                 }
@@ -429,7 +429,7 @@ impl<'a> PdfSimpleFont<'a> {
         }
 
         let mut width_map = HashMap::new();
-        if is_core_font(&base_name) {
+        if is_core_font(&base_name) && descriptor.is_none() {
             for font_metrics in core_fonts::metrics().iter() {
                 if font_metrics.0 == base_name {
                     if let Some(ref encoding) = encoding_table {
@@ -466,6 +466,10 @@ impl<'a> PdfSimpleFont<'a> {
                             }
                         }
                     }
+                    /* "Ordinarily, a font dictionary that refers to one of the standard fonts
+                        should omit the FirstChar, LastChar, Widths, and FontDescriptor entries.
+                        However, it is permissible to override a standard font by including these
+                        entries and embedding the font program in the PDF file." */
                     assert!(maybe_get_obj(doc, font, "FirstChar").is_none());
                     assert!(maybe_get_obj(doc, font, "LastChar").is_none());
                     assert!(maybe_get_obj(doc, font, "Widths").is_none());
