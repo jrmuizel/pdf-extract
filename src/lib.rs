@@ -247,12 +247,20 @@ fn get<'a, T: FromOptObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &str
     T::from_opt_obj(doc, dict.get(key), key)
 }
 
-fn get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> String {
+fn get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> String {
     pdf_to_utf8(dict.get(key).map(|o| maybe_deref(doc, o)).unwrap().as_name().unwrap())
 }
 
-fn maybe_get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<String> {
+fn get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> &'a [u8] {
+    dict.get(key).map(|o| maybe_deref(doc, o)).unwrap().as_name().unwrap()
+}
+
+fn maybe_get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<String> {
     maybe_get_obj(doc, dict, key).and_then(|n| n.as_name()).map(|n| pdf_to_utf8(n))
+}
+
+fn maybe_get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<&'a [u8]> {
+    maybe_get_obj(doc, dict, key).and_then(|n| n.as_name())
 }
 
 fn maybe_get_array<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<&'a Vec<Object>> {
@@ -271,7 +279,7 @@ struct PdfSimpleFont<'a> {
 
 
 fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Rc<PdfFont + 'a> {
-    let subtype = get_name(doc, font, "Subtype");
+    let subtype = get_name_string(doc, font, "Subtype");
     dlog!("MakeFont({})", subtype);
     if subtype == "Type0" {
         Rc::new(PdfCIDFont::new(doc, font))
@@ -300,6 +308,19 @@ fn is_core_font(name: &str) -> bool {
     }
 }
 
+fn encoding_to_unicode_table(name: &[u8]) -> Vec<u16> {
+    let encoding = match &name[..] {
+        b"MacRomanEncoding" => encodings::MAC_ROMAN_ENCODING,
+        b"MacExpertEncoding" => encodings::MAC_EXPERT_ENCODING,
+        b"WinAnsiEncoding" => encodings::WIN_ANSI_ENCODING,
+        _ => panic!("unexpected encoding {:?}", pdf_to_utf8(name))
+    };
+    let encoding_table = encoding.iter()
+        .map(|x| if let &Some(x) = x { glyphnames::name_to_unicode(x).unwrap() } else { 0 })
+        .collect();
+    encoding_table
+}
+
 /* "Glyphs in the font are selected by single-byte character codes obtained from a string that
     is shown by the text-showing operators. Logically, these codes index into a table of 256
     glyphs; the mapping from codes to glyphs is called the font’s encoding. Each font program
@@ -308,8 +329,8 @@ fn is_core_font(name: &str) -> bool {
 */
 impl<'a> PdfSimpleFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfSimpleFont<'a> {
-        let base_name = get_name(doc, font, "BaseFont");
-        let subtype = get_name(doc, font, "Subtype");
+        let base_name = get_name_string(doc, font, "BaseFont");
+        let subtype = get_name_string(doc, font, "Subtype");
 
         let encoding: Option<&Object> = get(doc, font, "Encoding");
         dlog!("base_name {} {} enc:{:?} {:?}", base_name, subtype, encoding, font);
@@ -344,23 +365,16 @@ impl<'a> PdfSimpleFont<'a> {
         match encoding {
             Some(&Object::Name(ref encoding_name)) => {
                 dlog!("encoding {:?}", pdf_to_utf8(encoding_name));
-                //encoding_table = Some(Vec::from(
-                let encoding = match &encoding_name[..] {
-                    b"MacRomanEncoding" => encodings::MAC_ROMAN_ENCODING,
-                    b"MacExpertEncoding" => encodings::MAC_EXPERT_ENCODING,
-                    b"WinAnsiEncoding" => encodings::WIN_ANSI_ENCODING,
-                    _ => panic!("unexpected encoding {:?}", pdf_to_utf8(encoding_name))
-                };
-                encoding_table = Some(encoding.iter()
-                    .map(|x| if let &Some(x) = x { glyphnames::name_to_unicode(x).unwrap() } else { 0 })
-                    .collect());
+                encoding_table = Some(encoding_to_unicode_table(encoding_name));
             }
             Some(&Object::Dictionary(ref encoding)) => {
                 //dlog!("Encoding {:?}", encoding);
-                if let Some(base_encoding) = maybe_get_obj(doc, encoding, "BaseEncoding") {
-                    panic!("BaseEncoding {:?}", base_encoding);
-                }
-                let mut table = Vec::from(PDFDocEncoding);
+                let mut table = if let Some(base_encoding) = maybe_get_name(doc, encoding, "BaseEncoding") {
+                    dlog!("BaseEncoding {:?}", base_encoding);
+                    encoding_to_unicode_table(base_encoding)
+                } else {
+                    Vec::from(PDFDocEncoding)
+                };
                 let differences = maybe_get_array(doc, encoding, "Differences");
                 if let Some(differences) = differences {
                     dlog!("Differences");
@@ -473,13 +487,13 @@ impl<'a> PdfSimpleFont<'a> {
         get_obj(self.doc, self.font.get("Encoding").unwrap())
     }
     fn get_type(&self) -> String {
-        get_name(self.doc, self.font, "Type")
+        get_name_string(self.doc, self.font, "Type")
     }
     fn get_basefont(&self) -> String {
-        get_name(self.doc, self.font, "BaseFont")
+        get_name_string(self.doc, self.font, "BaseFont")
     }
     fn get_subtype(&self) -> String {
-        get_name(self.doc, self.font, "Subtype")
+        get_name_string(self.doc, self.font, "Subtype")
     }
     fn get_widths(&self) -> Option<&Vec<Object>> {
         maybe_get_obj(self.doc, self.font, "Widths").map(|widths| widths.as_array().expect("Widths should be an array"))
@@ -487,7 +501,7 @@ impl<'a> PdfSimpleFont<'a> {
     /* For type1: This entry is obsolescent and its use is no longer recommended. (See
      * implementation note 42 in Appendix H.) */
     fn get_name(&self) -> Option<String> {
-        maybe_get_name(self.doc, self.font, "Name")
+        maybe_get_name_string(self.doc, self.font, "Name")
     }
 
     fn get_descriptor(&self) -> Option<PdfFontDescriptor> {
@@ -625,7 +639,7 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
 
 impl<'a> PdfCIDFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfCIDFont<'a> {
-        let base_name = get_name(doc, font, "BaseFont");
+        let base_name = get_name_string(doc, font, "BaseFont");
         let descendants = maybe_get_array(doc, font, "DescendantFonts").expect("Descendant fonts required");
         let ciddict = maybe_deref(doc, &descendants[0]).as_dict().expect("should be CID dict");
         let encoding = maybe_get_obj(doc, font, "Encoding").expect("Encoding required in type0 fonts");
