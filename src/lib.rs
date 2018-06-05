@@ -1190,7 +1190,6 @@ fn process_stream(doc: &Document, content: Vec<u8>, resources: &Dictionary, medi
             }
             "TL" => {
                 gs.ts.leading = as_num(&operation.operands[0]);
-                panic!("should this be negative?");
             }
             "Tf" => {
                 let fonts: &Dictionary = get(&doc, resources, "Font");
@@ -1251,7 +1250,7 @@ fn process_stream(doc: &Document, content: Vec<u8>, resources: &Dictionary, medi
                 let tx = as_num(&operation.operands[0]);
                 let ty = as_num(&operation.operands[1]);
                 dlog!("translation: {} {}", tx, ty);
-                gs.ts.leading = ty;
+                gs.ts.leading = -ty;
 
                 tlm = tlm.pre_mul(&Transform2D::create_translation(tx, ty));
                 gs.ts.tm = tlm;
@@ -1261,7 +1260,7 @@ fn process_stream(doc: &Document, content: Vec<u8>, resources: &Dictionary, medi
 
             "T*" => {
                 let tx = 0.0;
-                let ty = gs.ts.leading;
+                let ty = -gs.ts.leading;
 
                 tlm = tlm.pre_mul(&Transform2D::create_translation(tx, ty));
                 gs.ts.tm = tlm;
