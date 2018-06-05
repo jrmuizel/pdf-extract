@@ -1372,11 +1372,11 @@ pub trait OutputDev {
 
 
 pub struct HTMLOutput<'a>  {
-    file: &'a mut File
+    file: &'a mut std::io::Write
 }
 
 impl<'a> HTMLOutput<'a> {
-    pub fn new(file: &mut File) -> HTMLOutput {
+    pub fn new(file: &mut std::io::Write) -> HTMLOutput {
         HTMLOutput{file}
     }
 }
@@ -1402,10 +1402,10 @@ impl<'a> OutputDev for HTMLOutput<'a> {
 }
 
 pub struct SVGOutput<'a>  {
-    file: &'a mut File
+    file: &'a mut std::io::Write
 }
 impl<'a> SVGOutput<'a> {
-    pub fn new(file: &mut File) -> SVGOutput {
+    pub fn new(file: &mut std::io::Write) -> SVGOutput {
         SVGOutput{file}
     }
 }
