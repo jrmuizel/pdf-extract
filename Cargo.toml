@@ -8,6 +8,9 @@ description = "A library to extract content from pdfs"
 keywords = ["pdf2text", "text", "pdf", "pdf2txt"]
 repository = "https://github.com/jrmuizel/pdf-extract"
 
+[profile.release]
+debug = true
+
 [dependencies]
 adobe-cmap-parser = "0.3.2"
 encoding = "0.2.33"
