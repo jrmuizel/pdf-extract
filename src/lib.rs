@@ -963,7 +963,7 @@ fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
                         panic!("unexpected smask name")
                     }
                 }
-                _ => { panic!("unexpected smask type {:?}", k) }
+                _ => { panic!("unexpected smask type {:?}", v) }
             }}
             _ => {  dlog!("unapplied state: {:?} {:?}", k, v); }
         }
@@ -1027,6 +1027,7 @@ pub enum ColorSpace {
     DeviceGray,
     DeviceRGB,
     DeviceCMYK,
+    Pattern,
     CalRGB(CalRGB),
     CalGray(CalGray),
     Lab(Lab),
@@ -1039,9 +1040,10 @@ fn make_colorspace<'a>(doc: &'a Document, name: String, resources: &'a Dictionar
         "DeviceGray" => ColorSpace::DeviceGray,
         "DeviceRGB" => ColorSpace::DeviceRGB,
         "DeviceCMYK" => ColorSpace::DeviceCMYK,
+        "Pattern" => ColorSpace::Pattern,
         _ => {
             let colorspaces: &Dictionary = get(&doc, resources, "ColorSpace");
-            let cs = maybe_get_array(doc, colorspaces,&name[..]).expect("missing colorspace");
+            let cs = maybe_get_array(doc, colorspaces,&name[..]).unwrap_or_else(|| panic!("missing colorspace {:?}", &name[..]));;
             let cs_name = pdf_to_utf8(cs[0].as_name().expect("first arg must be a name"));
             match cs_name.as_ref() {
                 "Separation" => {
@@ -1163,10 +1165,16 @@ impl<'a> Processor<'a> {
                     gs.fill_colorspace = make_colorspace(doc, name, resources);
                 }
                 "SC" | "SCN" => {
-                    gs.stroke_color = operation.operands.iter().map(|x| as_num(x)).collect();
+                    gs.stroke_color = match gs.fill_colorspace {
+                        ColorSpace::Pattern => { dlog!("unhandled pattern color"); Vec::new() }
+                        _ => { operation.operands.iter().map(|x| as_num(x)).collect() }
+                    };
                 }
                 "sc" | "scn" => {
-                    gs.fill_color = operation.operands.iter().map(|x| as_num(x)).collect();
+                    gs.fill_color = match gs.fill_colorspace {
+                        ColorSpace::Pattern => { dlog!("unhandled pattern color"); Vec::new() }
+                        _ => { operation.operands.iter().map(|x| as_num(x)).collect() }
+                    };
                 }
                 "G" | "g" | "RG" | "rg" | "K" | "k" => {
                     dlog!("unhandled color operation {:?}", operation);
