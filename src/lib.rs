@@ -820,9 +820,16 @@ impl Type0Func {
 }
 
 #[derive(Clone, Debug)]
+struct Type2Func {
+    c0: Option<Vec<f64>>,
+    c1: Option<Vec<f64>>,
+    n: f64,
+}
+
+#[derive(Clone, Debug)]
 enum Function {
     Type0(Type0Func),
-    Type1,
+    Type2(Type2Func),
     Type3,
     Type4
 }
@@ -860,6 +867,12 @@ impl Function {
                 let decode = get::<Option<Vec<f64>>>(doc, dict, "Decode").unwrap_or_else(|| range.clone());
 
                 Function::Type0(Type0Func { domain, range, size, contents, bits_per_sample, encode, decode })
+            }
+            2 => {
+                let c0 = get::<Option<Vec<f64>>>(doc, dict, "C0");
+                let c1 = get::<Option<Vec<f64>>>(doc, dict, "C1");
+                let n = get::<f64>(doc, dict, "N");
+                Function::Type2(Type2Func { c0, c1, n})
             }
             _ => { panic!("unhandled function type {}", function_type) }
         };
