@@ -680,29 +680,31 @@ impl<'a> PdfCIDFont<'a> {
         let font_dict = maybe_get_obj(doc, ciddict, "FontDescriptor").expect("required");
         dlog!("{:?}", font_dict);
         let f = font_dict.as_dict().expect("must be dict");
-        let default_width = maybe_get_obj(doc, ciddict, "DW").and_then(|x| x.as_i64()).unwrap_or(1000);
-        let w = maybe_get_array(doc, ciddict, "W").expect("widths");
+        let default_width = get::<Option<i64>>(doc, ciddict, "DW").unwrap_or(1000);
+        let w: Option<Vec<&Object>> = get(doc, ciddict, "W");
         dlog!("widths {:?}", w);
         let mut widths = HashMap::new();
         let mut i = 0;
-        while i < w.len() {
-            if let Object::Array(ref wa) = w[i+1] {
-                let cid = w[i].as_i64().expect("id should be num");
-                let mut j = 0;
-                dlog!("wa: {:?} -> {:?}", cid, wa);
-                for w in wa {
-                    widths.insert((cid + j) as CharCode, as_num(w) );
-                    j += 1;
+        if let Some(w) = w {
+            while i < w.len() {
+                if let &Object::Array(ref wa) = w[i+1] {
+                    let cid = w[i].as_i64().expect("id should be num");
+                    let mut j = 0;
+                    dlog!("wa: {:?} -> {:?}", cid, wa);
+                    for w in wa {
+                        widths.insert((cid + j) as CharCode, as_num(w) );
+                        j += 1;
+                    }
+                    i += 2;
+                } else {
+                    let c_first = w[i].as_i64().expect("first should be num");
+                    let c_last = w[i].as_i64().expect("last should be num");
+                    let c_width = as_num(&w[i]);
+                    for id in c_first..c_last {
+                        widths.insert(id as CharCode, c_width);
+                    }
+                    i += 3;
                 }
-                i += 2;
-            } else {
-                let c_first = w[i].as_i64().expect("first should be num");
-                let c_last = w[i].as_i64().expect("last should be num");
-                let c_width = as_num(&w[i]);
-                for id in c_first..c_last {
-                    widths.insert(id as CharCode, c_width);
-                }
-                i += 3;
             }
         }
         PdfCIDFont{doc, font, widths, to_unicode: unicode_map, encoding: None, default_width: Some(default_width as f64) }
