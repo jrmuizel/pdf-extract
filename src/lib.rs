@@ -339,14 +339,23 @@ impl<'a> PdfSimpleFont<'a> {
         let mut type1_encoding = None;
         if let Some(descriptor) = descriptor {
             dlog!("descriptor {:?}", descriptor);
-            let file = maybe_get_obj(doc, descriptor, "FontFile");
             if subtype == "Type1" {
+                let file = maybe_get_obj(doc, descriptor, "FontFile");
                 match file {
                     Some(&Object::Stream(ref s)) => {
                         let s = get_contents(s);
                         //dlog!("font contents {:?}", pdf_to_utf8(&s));
                         type1_encoding = Some(type1_encoding_parser::get_encoding_map(&s).expect("encoding"));
 
+                    }
+                    _ => { dlog!("font file {:?}", file) }
+                }
+            } else if subtype == "TrueType" {
+                let file = maybe_get_obj(doc, descriptor, "FontFile2");
+                match file {
+                    Some(&Object::Stream(ref s)) => {
+                        let _s = get_contents(s);
+                        //File::create(format!("/tmp/{}", base_name)).unwrap().write_all(&s);
                     }
                     _ => { dlog!("font file {:?}", file) }
                 }
@@ -852,7 +861,7 @@ impl Function {
 
                 Function::Type0(Type0Func { domain, range, size, contents, bits_per_sample, encode, decode })
             }
-            _ => { panic!() }
+            _ => { panic!("unhandled function type {}", function_type) }
         };
         f
     }
