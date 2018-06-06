@@ -670,9 +670,8 @@ impl<'a> PdfCIDFont<'a> {
         match encoding {
             &Object::Name(ref name) => {
                 let name = pdf_to_utf8(name);
-                assert!(name == "Identity-H");
-
                 dlog!("encoding {:?}", name);
+                assert!(name == "Identity-H");
             }
             _ => { panic!("unsupported encoding")}
         }
@@ -1121,6 +1120,9 @@ fn make_colorspace<'a>(doc: &'a Document, name: String, resources: &'a Dictionar
                         black_point: get(&doc, dict, "BackPoint"),
                         range: get(&doc, dict, "Range"),
                     })
+                }
+                "Pattern" => {
+                    ColorSpace::Pattern
                 }
                 _ => {
                     dlog!("color_space {} {:?} {:?}", name, cs_name, cs);
