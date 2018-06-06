@@ -640,7 +640,11 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
             dlog!("map: {:?}", unicode_map);
         }
         None => { }
-        _ => { panic!("unsupported cmap")}
+        Some(&Object::Name(ref name)) => {
+            let name = pdf_to_utf8(name);
+            assert!(name == "Identity-H");
+        }
+        _ => { panic!("unsupported cmap {:?}", to_unicode)}
     }
     unicode_map
 }
