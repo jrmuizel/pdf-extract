@@ -461,7 +461,11 @@ impl<'a> PdfSimpleFont<'a> {
                             dlog!("{} {}", w.0, w.2);
                             // -1 is "not encoded"
                             if w.0 != -1 {
-                                table[w.0 as usize] = glyphnames::name_to_unicode(w.2).unwrap()
+                                table[w.0 as usize] = if base_name == "ZapfDingbats" {
+                                    glyphnames::zapfdigbats_names_to_unicode(w.2).unwrap_or_else(|| panic!("bad name {:?}", w))
+                                } else {
+                                    glyphnames::name_to_unicode(w.2).unwrap()
+                                }
                             }
                         }
 
@@ -469,11 +473,8 @@ impl<'a> PdfSimpleFont<'a> {
                         for w in font_metrics.2 {
                             width_map.insert(w.0 as CharCode, w.1 as f64);
                             // -1 is "not encoded"
-                            if (w.0 != -1 && encoding[w.0 as usize] != glyphnames::name_to_unicode(w.2).unwrap()) {
-                                dlog!("{} {} {}", w.2, encoding[w.0 as usize], glyphnames::name_to_unicode(w.2).unwrap());
-                                panic!()
-                            }
                         }
+                        encoding_table = Some(encoding.to_vec());
                     }
                     /* "Ordinarily, a font dictionary that refers to one of the standard fonts
                         should omit the FirstChar, LastChar, Widths, and FontDescriptor entries.
