@@ -642,6 +642,14 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
                     be.push(((v[i] as u16) << 8) | v[i+1] as u16);
                     i += 2;
                 }
+                match &be[..] {
+                    [0xd800 ... 0xdfff] => {
+                        // this range is not specified as not being encoded
+                        // we ignore them so we don't an error from from_utt16
+                        continue;
+                    }
+                    _ => {}
+                }
                 let s = String::from_utf16(&be).unwrap();
                 unicode.insert(k, s);
             }
@@ -674,7 +682,11 @@ impl<'a> PdfCIDFont<'a> {
                 dlog!("encoding {:?}", name);
                 assert!(name == "Identity-H");
             }
-            _ => { panic!("unsupported encoding")}
+            &Object::Stream(ref stream) => {
+                let contents = get_contents(stream);
+                dlog!("Stream: {}", String::from_utf8(contents.clone()).unwrap());
+            }
+            _ => { panic!("unsupported encoding {:?}", encoding)}
         }
 
         // Sometimes a Type0 font might refer to the same underlying data as regular font. In this case we may be able to extract some encoding
