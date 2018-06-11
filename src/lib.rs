@@ -1277,9 +1277,7 @@ fn make_colorspace<'a>(doc: &'a Document, name: String, resources: &'a Dictionar
                     ColorSpace::Pattern
                 }
                 _ => {
-                    dlog!("color_space {} {:?} {:?}", name, cs_name, cs);
-
-                    panic!()
+                    panic!("color_space {} {:?} {:?}", name, cs_name, cs)
                 }
             }
         }
