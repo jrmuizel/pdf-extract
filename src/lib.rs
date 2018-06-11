@@ -1438,7 +1438,7 @@ impl<'a> Processor<'a> {
                 "Tf" => {
                     let fonts: &Dictionary = get(&doc, resources, "Font");
                     let name = str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap();
-                    let font = font_table.entry(name.to_string()).or_insert_with(|| make_font(doc, get_obj(doc, fonts.get(name).unwrap()).as_dict().unwrap())).clone();
+                    let font = font_table.entry(name.to_string()).or_insert_with(|| make_font(doc, get::<&Dictionary>(doc, fonts, name))).clone();
                     {
                         /*let file = font.get_descriptor().and_then(|desc| desc.get_file());
                     if let Some(file) = file {
