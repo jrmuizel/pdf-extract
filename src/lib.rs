@@ -133,12 +133,6 @@ fn get_type(o: &Dictionary) -> &str
     o.type_name().unwrap()
 }
 
-
-fn get_obj<'a>(doc: &'a Document, o: &Object) -> &'a Object
-{
-    doc.get_object(o.as_reference().unwrap()).unwrap()
-}
-
 fn maybe_deref<'a>(doc: &'a Document, o: &'a Object) -> &'a Object {
     match o {
         &Object::Reference(r) => doc.get_object(r).expect("missing object reference"),
@@ -538,9 +532,6 @@ impl<'a> PdfSimpleFont<'a> {
         PdfSimpleFont {doc, font, widths: width_map, encoding: encoding_table, default_width: None, unicode_map}
     }
 
-    fn get_encoding(&self) -> &'a Object {
-        get_obj(self.doc, self.font.get("Encoding").unwrap())
-    }
     fn get_type(&self) -> String {
         get_name_string(self.doc, self.font, "Type")
     }
@@ -940,9 +931,6 @@ struct PdfFontDescriptor<'a> {
 impl<'a> PdfFontDescriptor<'a> {
     fn get_file(&self) -> Option<&'a Object> {
         maybe_get_obj(self.doc, self.desc, "FontFile")
-    }
-    fn get_name(&self) -> String {
-        pdf_to_utf8(get_obj(self.doc, self.desc.get("Name").unwrap()).as_name().unwrap())
     }
 }
 
