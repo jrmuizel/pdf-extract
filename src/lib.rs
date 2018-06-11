@@ -1836,19 +1836,20 @@ pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<
     return Ok(s);
 }
 
-fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> T {
+fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<T> {
     let o: Option<T> = get(doc, dict, key);
     if let Some(o) = o {
-        o
+        Some(o)
     } else {
         let parent = dict.get("Parent")
             .and_then(|parent| parent.as_reference())
-            .and_then(|id| doc.get_dictionary(id)).expect("we need a parent");
+            .and_then(|id| doc.get_dictionary(id))?;
         get_inherited(doc, parent, key)
     }
 }
 /// Parse a given document and output it to `output`
 pub fn output_doc(doc: &Document, output: &mut OutputDev) {
+    let empty_resources = &Dictionary::new();
 
     let pages = doc.get_pages();
     let mut p = Processor::new();
@@ -1856,11 +1857,12 @@ pub fn output_doc(doc: &Document, output: &mut OutputDev) {
         let page_num = dict.0;
         let page_dict = doc.get_object(dict.1).unwrap().as_dict().unwrap();
         dlog!("page {} {:?}", page_num, page_dict);
-        let resources: &Dictionary = get_inherited(doc, page_dict, "Resources");
+        // XXX: Some pdfs lack a Resources directory
+        let resources = get_inherited(doc, page_dict, "Resources").unwrap_or(empty_resources);
         dlog!("resources {:?}", resources);
 
         // pdfium searches up the page tree for MediaBoxes as needed
-        let media_box: Vec<f64> = get_inherited(doc, page_dict, "MediaBox");
+        let media_box: Vec<f64> = get_inherited(doc, page_dict, "MediaBox").expect("MediaBox");
         let media_box = MediaBox { llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3] };
 
         let art_box = get::<Option<Vec<f64>>>(&doc, page_dict, "ArtBox")
