@@ -361,6 +361,15 @@ impl<'a> PdfSimpleFont<'a> {
                 }
             }
 
+            let font_file3 = get::<Option<&Object>>(doc, descriptor, "FontFile3");
+            match font_file3 {
+                Some(&Object::Stream(ref s)) => {
+                    dlog!("font file {:?}", s);
+                }
+                None => {}
+                _ => { dlog!("unexpected") }
+            }
+
             let charset = maybe_get_obj(doc, descriptor, "CharSet");
             let charset = match charset {
                 Some(&Object::String(ref s, _)) => { Some(pdf_to_utf8(&s)) }
@@ -438,7 +447,7 @@ impl<'a> PdfSimpleFont<'a> {
         }
 
         let mut width_map = HashMap::new();
-        if is_core_font(&base_name) && descriptor.is_none() {
+        if is_core_font(&base_name) {
             for font_metrics in core_fonts::metrics().iter() {
                 if font_metrics.0 == base_name {
                     if let Some(ref encoding) = encoding_table {
@@ -479,10 +488,12 @@ impl<'a> PdfSimpleFont<'a> {
                     /* "Ordinarily, a font dictionary that refers to one of the standard fonts
                         should omit the FirstChar, LastChar, Widths, and FontDescriptor entries.
                         However, it is permissible to override a standard font by including these
-                        entries and embedding the font program in the PDF file." */
-                    assert!(maybe_get_obj(doc, font, "FirstChar").is_none());
-                    assert!(maybe_get_obj(doc, font, "LastChar").is_none());
-                    assert!(maybe_get_obj(doc, font, "Widths").is_none());
+                        entries and embedding the font program in the PDF file."
+
+                        Note: some PDFs include a descriptor but still don't include these entries */
+                    // assert!(maybe_get_obj(doc, font, "FirstChar").is_none());
+                    // assert!(maybe_get_obj(doc, font, "LastChar").is_none());
+                    // assert!(maybe_get_obj(doc, font, "Widths").is_none());
                 }
             }
         } else {
