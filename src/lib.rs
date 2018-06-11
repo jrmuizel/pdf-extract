@@ -22,6 +22,7 @@ use std::rc::Rc;
 use std::marker::PhantomData;
 mod core_fonts;
 mod glyphnames;
+mod zapfglyphnames;
 mod encodings;
 
 macro_rules! dlog {
@@ -482,7 +483,7 @@ impl<'a> PdfSimpleFont<'a> {
                             // -1 is "not encoded"
                             if w.0 != -1 {
                                 table[w.0 as usize] = if base_name == "ZapfDingbats" {
-                                    glyphnames::zapfdigbats_names_to_unicode(w.2).unwrap_or_else(|| panic!("bad name {:?}", w))
+                                    zapfglyphnames::zapfdigbats_names_to_unicode(w.2).unwrap_or_else(|| panic!("bad name {:?}", w))
                                 } else {
                                     glyphnames::name_to_unicode(w.2).unwrap()
                                 }
