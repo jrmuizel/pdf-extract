@@ -516,6 +516,7 @@ impl<'a> PdfSimpleFont<'a> {
                 }
             }
         } else {
+            // Some PDF's don't have these like fips-197.pdf
             let mut first_char: i64 = get(doc, font, "FirstChar");
             let mut last_char: i64 = get(doc, font, "LastChar");
             let mut widths: Vec<f64> = get(doc, font, "Widths");
