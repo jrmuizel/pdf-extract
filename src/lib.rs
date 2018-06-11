@@ -18,6 +18,7 @@ use std::str;
 use std::fs::File;
 use std::slice::Iter;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::rc::Rc;
 use std::marker::PhantomData;
 mod core_fonts;
@@ -27,7 +28,7 @@ mod encodings;
 
 macro_rules! dlog {
     ($($e:expr),*) => { {$(let _ = $e;)*} }
-    // ($($t:tt)*) => { println!($($t)*) }
+    //($($t:tt)*) => { println!($($t)*) }
 }
 
 fn get_info(doc: &Document) -> Option<&Dictionary> {
@@ -390,7 +391,7 @@ impl<'a> PdfSimpleFont<'a> {
             //dlog!("charset {:?}", charset);
         }
 
-        let unicode_map = get_unicode_map(doc, font);
+        let mut unicode_map = get_unicode_map(doc, font);
 
         let mut encoding_table = None;
         match encoding {
@@ -420,9 +421,21 @@ impl<'a> PdfSimpleFont<'a> {
                                 let unicode = glyphnames::name_to_unicode(&name);
                                 if let Some(unicode) = unicode{
                                     table[code as usize] = unicode;
+                                    if let Some(ref mut unicode_map) = unicode_map {
+                                        let be = [unicode];
+                                        match unicode_map.entry(code as u32) {
+                                            // If there's a unicode table entry missing use one based on the name
+                                            Entry::Vacant(v) => { v.insert(String::from_utf16(&be).unwrap()); }
+                                            Entry::Occupied(e) => {
+                                                if e.get() != &String::from_utf16(&be).unwrap() {
+                                                    println!("Unicode mismatch");
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 dlog!("{} = {} ({:?})", code, name, unicode);
-                                if let Some(ref unicode_map) = unicode_map {
+                                if let Some(ref mut unicode_map) = unicode_map {
                                     dlog!("{} {}", code, unicode_map[&(code as u32)]);
                                 }
                                 code += 1;
