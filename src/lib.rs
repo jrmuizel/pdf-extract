@@ -1320,7 +1320,7 @@ impl<'a> Processor<'a> {
         // XXX: replace tlm with a point for text start
         let mut tlm = Transform2D::identity();
         let mut path = Path::new();
-        let mut flip_ctm = Transform2D::row_major(1., 0., 0., -1., 0., (media_box.ury - media_box.lly));
+        let mut flip_ctm = Transform2D::row_major(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
         dlog!("MediaBox {:?}", media_box);
         for operation in &content.operations {
             //dlog!("op: {:?}", operation);
