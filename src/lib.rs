@@ -1510,7 +1510,14 @@ impl<'a> Processor<'a> {
                     output.end_line();
                 }
                 "q" => { gs_stack.push(gs.clone()); }
-                "Q" => { gs = gs_stack.pop().unwrap(); }
+                "Q" => {
+                    let s = gs_stack.pop();
+                    if let Some(s) = s {
+                        gs = s;
+                    } else {
+                        println!("No state to pop");
+                    }
+                }
                 "gs" => {
                     let ext_gstate: &Dictionary = get(doc, resources, "ExtGState");
                     let name = pdf_to_utf8(operation.operands[0].as_name().unwrap());
