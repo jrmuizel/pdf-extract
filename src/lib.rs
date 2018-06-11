@@ -26,7 +26,7 @@ mod encodings;
 
 macro_rules! dlog {
     ($($e:expr),*) => { {$(let _ = $e;)*} }
-    //($($t:tt)*) => { println!($($t)*) }
+    // ($($t:tt)*) => { println!($($t)*) }
 }
 
 fn get_info(doc: &Document) -> Option<&Dictionary> {
@@ -278,12 +278,23 @@ struct PdfSimpleFont<'a> {
     default_width: Option<f64>, // only used for CID fonts and we should probably brake out the different font types
 }
 
+#[derive(Clone)]
+struct PdfType3Font<'a> {
+    font: &'a Dictionary,
+    doc: &'a Document,
+    encoding: Option<Vec<u16>>,
+    unicode_map: Option<HashMap<u32, String>>,
+    widths: HashMap<CharCode, f64>, // should probably just use i32 here
+}
+
 
 fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Rc<PdfFont + 'a> {
     let subtype = get_name_string(doc, font, "Subtype");
     dlog!("MakeFont({})", subtype);
     if subtype == "Type0" {
         Rc::new(PdfCIDFont::new(doc, font))
+    } else if subtype == "Type3" {
+        Rc::new(PdfType3Font::new(doc, font))
     } else {
         Rc::new(PdfSimpleFont::new(doc, font))
     }
@@ -539,6 +550,79 @@ impl<'a> PdfSimpleFont<'a> {
     }
 }
 
+
+
+impl<'a> PdfType3Font<'a> {
+    fn new(doc: &'a Document, font: &'a Dictionary) -> PdfType3Font<'a> {
+
+        let unicode_map = get_unicode_map(doc, font);
+        let encoding: Option<&Object> = get(doc, font, "Encoding");
+
+        let mut encoding_table = None;
+        match encoding {
+            Some(&Object::Name(ref encoding_name)) => {
+                dlog!("encoding {:?}", pdf_to_utf8(encoding_name));
+                encoding_table = Some(encoding_to_unicode_table(encoding_name));
+            }
+            Some(&Object::Dictionary(ref encoding)) => {
+                //dlog!("Encoding {:?}", encoding);
+                let mut table = if let Some(base_encoding) = maybe_get_name(doc, encoding, "BaseEncoding") {
+                    dlog!("BaseEncoding {:?}", base_encoding);
+                    encoding_to_unicode_table(base_encoding)
+                } else {
+                    Vec::from(PDFDocEncoding)
+                };
+                let differences = maybe_get_array(doc, encoding, "Differences");
+                if let Some(differences) = differences {
+                    dlog!("Differences");
+                    let mut code = 0;
+                    for o in differences {
+                        match o {
+                            &Object::Integer(i) => { code = i; },
+                            &Object::Name(ref n) => {
+                                let name = pdf_to_utf8(&n);
+                                // XXX: names of Type1 fonts can map to arbitrary strings instead of real
+                                // unicode names, so we should probably handle this differently
+                                let unicode = glyphnames::name_to_unicode(&name);
+                                if let Some(unicode) = unicode{
+                                    table[code as usize] = unicode;
+                                }
+                                dlog!("{} = {} ({:?})", code, name, unicode);
+                                if let Some(ref unicode_map) = unicode_map {
+                                    dlog!("{} {}", code, unicode_map[&(code as u32)]);
+                                }
+                                code += 1;
+                            }
+                            _ => { panic!("wrong type"); }
+                        }
+                    }
+                }
+                let name = pdf_to_utf8(encoding.get("Type").unwrap().as_name().unwrap());
+                dlog!("name: {}", name);
+
+                encoding_table = Some(table);
+            }
+            _ => { panic!() }
+        }
+
+        let mut first_char: i64 = get(doc, font, "FirstChar");
+        let mut last_char: i64 = get(doc, font, "LastChar");
+        let mut widths: Vec<f64> = get(doc, font, "Widths");
+
+        let mut width_map = HashMap::new();
+
+        let mut i = 0;
+        dlog!("first_char {:?}, last_char: {:?}, widths: {} {:?}", first_char, last_char, widths.len(), widths);
+
+        for w in widths {
+            width_map.insert((first_char + i) as CharCode, w);
+            i += 1;
+        }
+        assert_eq!(first_char + i - 1, last_char);
+        PdfType3Font {doc, font, widths: width_map, encoding: encoding_table, unicode_map}
+    }
+}
+
 type CharCode = u32;
 type CID = u32;
 
@@ -617,6 +701,48 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
 
 
 impl<'a> fmt::Debug for PdfSimpleFont<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.font.fmt(f)
+    }
+}
+
+impl<'a> PdfFont for PdfType3Font<'a> {
+    fn get_width(&self, id: CharCode) -> f64 {
+        let width = self.widths.get(&id);
+        if let Some(width) = width {
+            return *width;
+        } else {
+            panic!("missing width for {} {:?}", id, self.font);
+        }
+    }
+    /*fn decode(&self, chars: &[u8]) -> String {
+        let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
+        to_utf8(encoding, chars)
+    }*/
+
+    fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)> {
+        iter.next().map(|x| (*x as CharCode, 1))
+    }
+    fn decode_char(&self, char: CharCode) -> String {
+        let slice = [char as u8];
+        if let Some(ref unicode_map) = self.unicode_map {
+            let s = unicode_map.get(&char);
+            let s = match s {
+                None => { panic!("missing char {:?} in map {:?}", char, unicode_map)}
+                Some(s) => { s.clone() }
+            };
+            return s
+        }
+        let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
+        //dlog!("char_code {:?} {:?}", char, self.encoding);
+        let s = to_utf8(encoding, &slice);
+        s
+    }
+}
+
+
+
+impl<'a> fmt::Debug for PdfType3Font<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.font.fmt(f)
     }
