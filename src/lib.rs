@@ -406,6 +406,7 @@ impl<'a> PdfSimpleFont<'a> {
                     dlog!("Differences");
                     let mut code = 0;
                     for o in differences {
+                        let o = maybe_deref(doc, o);
                         match o {
                             &Object::Integer(i) => { code = i; },
                             &Object::Name(ref n) => {
@@ -434,7 +435,7 @@ impl<'a> PdfSimpleFont<'a> {
                                 }
                                 code += 1;
                             }
-                            _ => { panic!("wrong type"); }
+                            _ => { panic!("wrong type {:?}", o); }
                         }
                     }
                 }
