@@ -245,7 +245,7 @@ fn get<'a, T: FromOptObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &str
 }
 
 fn get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> String {
-    pdf_to_utf8(dict.get(key).map(|o| maybe_deref(doc, o)).unwrap().as_name().unwrap())
+    pdf_to_utf8(dict.get(key).map(|o| maybe_deref(doc, o)).unwrap_or_else(|| panic!("deref")).as_name().expect("name"))
 }
 
 fn get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> &'a [u8] {
@@ -1095,7 +1095,6 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
                                                  0.,
                                                  ts.rise);
         let trm = ts.tm.pre_mul(&gs.ctm);
-        let position = trm.post_mul(&flip_ctm);
         //dlog!("ctm: {:?} tm {:?}", gs.ctm, tm);
         //dlog!("current pos: {:?}", position);
         // 5.9 Extraction of Text Content
@@ -1110,10 +1109,7 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
         //  multiple-byte codes."
         let is_space = c == 32 && length == 1;
 
-        let transformed_font_size_vec = trm.transform_vector(&vec2(ts.font_size, ts.font_size));
-        // get the length of one sized of the square with the same area with a rectangle of size (x, y)
-        let transformed_font_size = (transformed_font_size_vec.x*transformed_font_size_vec.y).sqrt();
-        output.output_character(position.m31, position.m32, w0, transformed_font_size, &font.decode_char(c));
+        output.output_character(&trm, w0, ts.font_size, &font.decode_char(c));
         let tj = 0.;
         let ty = 0.;
         let spacing = if is_space { ts.word_spacing } else { ts.character_spacing };
@@ -1584,7 +1580,7 @@ impl<'a> Processor<'a> {
 pub trait OutputDev {
     fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, art_box: Option<(f64, f64, f64, f64)>);
     fn end_page(&mut self);
-    fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str);
+    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, font_size: f64, char: &str);
     fn begin_word(&mut self);
     fn end_word(&mut self);
     fn end_line(&mut self);
@@ -1594,12 +1590,17 @@ pub trait OutputDev {
 
 
 pub struct HTMLOutput<'a>  {
-    file: &'a mut std::io::Write
+    file: &'a mut std::io::Write,
+    flip_ctm: Transform2D<f64>,
+
 }
 
 impl<'a> HTMLOutput<'a> {
     pub fn new(file: &mut std::io::Write) -> HTMLOutput {
-        HTMLOutput{file}
+        HTMLOutput {
+            file,
+            flip_ctm: Transform2D::identity(),
+        }
     }
 }
 
@@ -1610,11 +1611,17 @@ impl<'a> OutputDev for HTMLOutput<'a> {
         write!(self.file, "<meta charset='utf-8' /> ");
         write!(self.file, "<!-- page {} -->", page_num);
         write!(self.file, "<div id='page{}' style='position: relative; height: {}px; width: {}px; border: 1px black solid'>", page_num, media_box.ury - media_box.lly, media_box.urx - media_box.llx);
+        self.flip_ctm = Transform2D::row_major(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
     }
     fn end_page(&mut self) {
         write!(self.file, "</div>");
     }
-    fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str) {
+    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, font_size: f64, char: &str) {
+        let position = trm.post_mul(&self.flip_ctm);
+        let transformed_font_size_vec = trm.transform_vector(&vec2(font_size, font_size));
+        // get the length of one sized of the square with the same area with a rectangle of size (x, y)
+        let transformed_font_size = (transformed_font_size_vec.x*transformed_font_size_vec.y).sqrt();
+        let (x, y) = (position.m31, position.m32);
         write!(self.file, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
                x, y, font_size, char);
     }
@@ -1668,7 +1675,7 @@ impl<'a> OutputDev for SVGOutput<'a> {
         write!(self.file, "</g>\n");
         write!(self.file, "</svg>");
     }
-    fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str) {
+    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, font_size: f64, char: &str) {
     }
     fn begin_word(&mut self) {}
     fn end_word(&mut self) {}
@@ -1760,12 +1767,19 @@ pub struct PlainTextOutput<W: ConvertToFmt>   {
     writer: W::Writer,
     last_end: f64,
     last_y: f64,
-    first_char: bool
+    first_char: bool,
+    flip_ctm: Transform2D<f64>,
 }
 
 impl<W: ConvertToFmt> PlainTextOutput<W> {
     pub fn new(writer: W) -> PlainTextOutput<W> {
-        PlainTextOutput{ writer: writer.convert(), last_end: 100000., first_char: false, last_y: 0.}
+        PlainTextOutput{
+            writer: writer.convert(),
+            last_end: 100000.,
+            first_char: false,
+            last_y: 0.,
+            flip_ctm: Transform2D::identity(),
+        }
     }
 }
 
@@ -1773,24 +1787,30 @@ impl<W: ConvertToFmt> PlainTextOutput<W> {
  * however relying on these is not likely to be sufficient. */
 impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
     fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, _: Option<ArtBox>) {
+        self.flip_ctm = Transform2D::row_major(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
     }
     fn end_page(&mut self) {
     }
-    fn output_character(&mut self, x: f64, y: f64, width: f64, font_size: f64, char: &str) {
+    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, font_size: f64, char: &str) {
+        let position = trm.post_mul(&self.flip_ctm);
+        let transformed_font_size_vec = trm.transform_vector(&vec2(font_size, font_size));
+        // get the length of one sized of the square with the same area with a rectangle of size (x, y)
+        let transformed_font_size = (transformed_font_size_vec.x*transformed_font_size_vec.y).sqrt();
+        let (x, y) = (position.m31, position.m32);
         use std::fmt::Write;
         //dlog!("last_end: {} x: {}, width: {}", self.last_end, x, width);
         if self.first_char {
-            if (y - self.last_y).abs() > font_size * 1.5 {
+            if (y - self.last_y).abs() > transformed_font_size * 1.5 {
                 write!(self.writer, "\n");
             }
 
             // we've moved to the left and down
-            if x < self.last_end && (y - self.last_y).abs() > font_size * 0.5 {
+            if x < self.last_end && (y - self.last_y).abs() > transformed_font_size * 0.5 {
                 write!(self.writer, "\n");
             }
 
-            if x > self.last_end + font_size * 0.1 {
-                dlog!("width: {}, space: {}, thresh: {}", width, x - self.last_end, font_size * 0.1);
+            if x > self.last_end + transformed_font_size * 0.1 {
+                dlog!("width: {}, space: {}, thresh: {}", width, x - self.last_end, transformed_font_size * 0.1);
                 write!(self.writer, " ");
             }
         }
@@ -1798,7 +1818,7 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
         write!(self.writer, "{}", char);
         self.first_char = false;
         self.last_y = y;
-        self.last_end = x + width * font_size;
+        self.last_end = x + width * transformed_font_size;
     }
     fn begin_word(&mut self) {
         self.first_char = true;
