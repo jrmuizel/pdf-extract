@@ -1110,11 +1110,10 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
         //  single-byte code. It does not apply to occurrences of the byte value 32 in
         //  multiple-byte codes."
         let is_space = c == 32 && length == 1;
-
-        output.output_character(&trm, w0, ts.font_size, &font.decode_char(c));
+        let spacing = if is_space { ts.word_spacing } else { ts.character_spacing };
+        output.output_character(&trm, w0, spacing, ts.font_size, &font.decode_char(c));
         let tj = 0.;
         let ty = 0.;
-        let spacing = if is_space { ts.word_spacing } else { ts.character_spacing };
         let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + spacing);
         // dlog!("w0: {}, tx: {}", w0, tx);
         ts.tm = ts.tm.pre_mul(&Transform2D::create_translation(tx, ty));
@@ -1590,7 +1589,7 @@ impl<'a> Processor<'a> {
 pub trait OutputDev {
     fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, art_box: Option<(f64, f64, f64, f64)>);
     fn end_page(&mut self);
-    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, font_size: f64, char: &str);
+    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, spacing: f64, font_size: f64, char: &str);
     fn begin_word(&mut self);
     fn end_word(&mut self);
     fn end_line(&mut self);
@@ -1626,7 +1625,7 @@ impl<'a> OutputDev for HTMLOutput<'a> {
     fn end_page(&mut self) {
         write!(self.file, "</div>");
     }
-    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, font_size: f64, char: &str) {
+    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, font_size: f64, spacing: f64, char: &str) {
         let position = trm.post_mul(&self.flip_ctm);
         let transformed_font_size_vec = trm.transform_vector(&vec2(font_size, font_size));
         // get the length of one sized of the square with the same area with a rectangle of size (x, y)
@@ -1685,7 +1684,7 @@ impl<'a> OutputDev for SVGOutput<'a> {
         write!(self.file, "</g>\n");
         write!(self.file, "</svg>");
     }
-    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, font_size: f64, char: &str) {
+    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, spacing: f64, font_size: f64, char: &str) {
     }
     fn begin_word(&mut self) {}
     fn end_word(&mut self) {}
@@ -1801,7 +1800,7 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
     }
     fn end_page(&mut self) {
     }
-    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, font_size: f64, char: &str) {
+    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, spacing: f64, font_size: f64, char: &str) {
         let position = trm.post_mul(&self.flip_ctm);
         let transformed_font_size_vec = trm.transform_vector(&vec2(font_size, font_size));
         // get the length of one sized of the square with the same area with a rectangle of size (x, y)
