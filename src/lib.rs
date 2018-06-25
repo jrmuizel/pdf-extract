@@ -1073,6 +1073,7 @@ struct GraphicsState<'a>
     fill_color: Vec<f64>,
     stroke_colorspace: ColorSpace,
     stroke_color: Vec<f64>,
+    line_width: f64,
 }
 
 fn show_text(gs: &mut GraphicsState, s: &[u8],
@@ -1309,6 +1310,7 @@ impl<'a> Processor<'a> {
             fill_colorspace: ColorSpace::DeviceGray,
             stroke_color: Vec::new(),
             stroke_colorspace: ColorSpace::DeviceGray,
+            line_width: 1.,
             ctm: Transform2D::identity(),
             smask: None
         };
@@ -1509,7 +1511,8 @@ impl<'a> Processor<'a> {
                     apply_state(&mut gs, state);
                 }
                 "i" => { dlog!("unhandled graphics state flattness operator {:?}", operation); }
-                "w" | "J" | "j" | "M" | "d" | "ri" => { dlog!("unknown graphics state operator {:?}", operation); }
+                "w" => { gs.line_width = as_num(&operation.operands[0]); }
+                "J" | "j" | "M" | "d" | "ri"  => { dlog!("unknown graphics state operator {:?}", operation); }
                 "m" => { path.ops.push(PathOp::MoveTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) }
                 "l" => { path.ops.push(PathOp::LineTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) }
                 "c" => {
