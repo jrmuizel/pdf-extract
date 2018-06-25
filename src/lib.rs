@@ -1089,13 +1089,14 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
     output.begin_word();
 
     for (c, length) in font.char_codes(s) {
-        let tsm = Transform2D::row_major(ts.font_size * ts.horizontal_scaling,
+        let tsm = Transform2D::row_major(ts.horizontal_scaling,
                                                  0.,
                                                  0.,
                                                  ts.horizontal_scaling,
                                                  0.,
                                                  ts.rise);
         let trm = ts.tm.pre_mul(&gs.ctm);
+        let trm = trm.post_mul(&tsm);
         //dlog!("ctm: {:?} tm {:?}", gs.ctm, tm);
         //dlog!("current pos: {:?}", position);
         // 5.9 Extraction of Text Content
