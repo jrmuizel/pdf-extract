@@ -1145,6 +1145,12 @@ fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
                 }
                 _ => { panic!("unexpected smask type {:?}", v) }
             }}
+            "Type" => { match v {
+                &Object::Name(ref name) => {
+                    assert_eq!(name, b"ExtGState")
+                }
+                _ => { panic!("unexpected type") }
+            }}
             _ => {  dlog!("unapplied state: {:?} {:?}", k, v); }
         }
     }
