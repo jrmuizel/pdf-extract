@@ -1092,7 +1092,7 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
         let tsm = Transform2D::row_major(ts.horizontal_scaling,
                                                  0.,
                                                  0.,
-                                                 ts.horizontal_scaling,
+                                                 1.0,
                                                  0.,
                                                  ts.rise);
         let trm = ts.tm.pre_mul(&gs.ctm);
@@ -1115,6 +1115,7 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
         let tj = 0.;
         let ty = 0.;
         let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + spacing);
+        println!("horizontal {} adjust {} {} {} {}", ts.horizontal_scaling, tx, w0, ts.font_size, spacing);
         // dlog!("w0: {}, tx: {}", w0, tx);
         ts.tm = ts.tm.pre_mul(&Transform2D::create_translation(tx, ty));
         let trm = ts.tm.pre_mul(&gs.ctm);
@@ -1601,7 +1602,10 @@ pub trait OutputDev {
 pub struct HTMLOutput<'a>  {
     file: &'a mut std::io::Write,
     flip_ctm: Transform2D<f64>,
-
+    last_ctm: Transform2D<f64>,
+    buf_ctm: Transform2D<f64>,
+    buf_font_size: f64,
+    buf: String
 }
 
 impl<'a> HTMLOutput<'a> {
@@ -1609,6 +1613,22 @@ impl<'a> HTMLOutput<'a> {
         HTMLOutput {
             file,
             flip_ctm: Transform2D::identity(),
+            last_ctm: Transform2D::identity(),
+            buf_ctm: Transform2D::identity(),
+            buf: String::new(),
+            buf_font_size: 0.,
+        }
+    }
+    fn flush_string(&mut self) {
+        if self.buf.len() != 0 {
+            println!("flush {}", self.buf);
+            let position = self.buf_ctm.post_mul(&self.flip_ctm);
+            let transformed_font_size_vec = self.buf_ctm.transform_vector(&vec2(self.buf_font_size, self.buf_font_size));
+            // get the length of one sized of the square with the same area with a rectangle of size (x, y)
+            let transformed_font_size = (transformed_font_size_vec.x * transformed_font_size_vec.y).sqrt();
+            let (x, y) = (position.m31, position.m32);
+            write!(self.file, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
+                   x, y, transformed_font_size, self.buf);
         }
     }
 }
@@ -1625,17 +1645,24 @@ impl<'a> OutputDev for HTMLOutput<'a> {
     fn end_page(&mut self) {
         write!(self.file, "</div>");
     }
-    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, font_size: f64, spacing: f64, char: &str) {
-        let position = trm.post_mul(&self.flip_ctm);
-        let transformed_font_size_vec = trm.transform_vector(&vec2(font_size, font_size));
-        // get the length of one sized of the square with the same area with a rectangle of size (x, y)
-        let transformed_font_size = (transformed_font_size_vec.x*transformed_font_size_vec.y).sqrt();
-        let (x, y) = (position.m31, position.m32);
-        write!(self.file, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
-               x, y, font_size, char);
+    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, spacing: f64, font_size: f64, char: &str) {
+        println!("{} {:?} {:?} {} {} {}", char, trm, self.last_ctm, width, font_size, spacing);
+        if trm.approx_eq(&self.last_ctm) {
+            self.buf += char;
+        } else {
+            self.flush_string();
+            self.buf = char.to_owned();
+            self.buf_font_size = font_size;
+            self.buf_ctm = *trm;
+        }
+        self.last_ctm = trm.pre_mul(&Transform2D::create_translation(width * font_size + spacing, 0.));
     }
     fn begin_word(&mut self) {}
-    fn end_word(&mut self) {}
+    fn end_word(&mut self) {
+        self.flush_string();
+        self.buf = "".to_owned();
+
+    }
     fn end_line(&mut self) {}
 }
 
