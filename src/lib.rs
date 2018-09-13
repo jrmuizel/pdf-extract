@@ -13,7 +13,6 @@ use euclid::vec2;
 use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_16BE;
 use std::fmt;
-use std::io::Write;
 use std::str;
 use std::fs::File;
 use std::slice::Iter;
@@ -795,6 +794,7 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
                     _ => {}
                 }
                 let s = String::from_utf16(&be).unwrap();
+
                 unicode.insert(k, s);
             }
             unicode_map = Some(unicode);
@@ -910,7 +910,7 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
         if let Some(s) = s {
             s.clone()
         } else {
-            dlog!("Unknown character {:?} in {:?}", char, self.font);
+            dlog!("Unknown character {:?} in {:?} {:?}", char, self.font, self.to_unicode);
             "".to_string()
         }
     }
@@ -1557,7 +1557,7 @@ impl<'a> Processor<'a> {
                                                as_num(&operation.operands[2]),
                                                as_num(&operation.operands[3])))
                 }
-                "s" | "f*" | "B" | "B*" | "b" | "n" => {
+                "s" | "f*" | "B" | "B*" | "b" => {
                     dlog!("unhandled path op {:?}", operation);
                 }
                 "S" => {
@@ -1608,6 +1608,26 @@ pub struct HTMLOutput<'a>  {
     buf: String
 }
 
+fn insert_nbsp(input: &str) -> String {
+    let mut result = String::new();
+    let mut word_end = false;
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == ' ' {
+            if !word_end || chars.peek().filter(|x| **x != ' ').is_none() {
+                result += "&nbsp;";
+            } else {
+                result += " ";
+            }
+            word_end = false;
+        } else {
+            word_end = true;
+            result.push(c);
+        }
+    }
+    result
+}
+
 impl<'a> HTMLOutput<'a> {
     pub fn new(file: &mut std::io::Write) -> HTMLOutput {
         HTMLOutput {
@@ -1621,14 +1641,16 @@ impl<'a> HTMLOutput<'a> {
     }
     fn flush_string(&mut self) {
         if self.buf.len() != 0 {
-            println!("flush {}", self.buf);
+
             let position = self.buf_ctm.post_mul(&self.flip_ctm);
             let transformed_font_size_vec = self.buf_ctm.transform_vector(&vec2(self.buf_font_size, self.buf_font_size));
             // get the length of one sized of the square with the same area with a rectangle of size (x, y)
             let transformed_font_size = (transformed_font_size_vec.x * transformed_font_size_vec.y).sqrt();
             let (x, y) = (position.m31, position.m32);
-            write!(self.file, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
-                   x, y, transformed_font_size, self.buf);
+            println!("flush {} {:?}", self.buf, (x,y));
+
+            write!(self.file, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>\n",
+                   x, y, transformed_font_size, insert_nbsp(&self.buf));
         }
     }
 }
@@ -1643,26 +1665,36 @@ impl<'a> OutputDev for HTMLOutput<'a> {
         self.flip_ctm = Transform2D::row_major(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
     }
     fn end_page(&mut self) {
+        self.flush_string();
+        self.buf = String::new();
+        self.last_ctm = Transform2D::identity();
         write!(self.file, "</div>");
     }
     fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, spacing: f64, font_size: f64, char: &str) {
-        println!("{} {:?} {:?} {} {} {}", char, trm, self.last_ctm, width, font_size, spacing);
         if trm.approx_eq(&self.last_ctm) {
+            let position = trm.post_mul(&self.flip_ctm);
+            let (x, y) = (position.m31, position.m32);
+
+            println!("accum {} {:?}", char, (x,y));
             self.buf += char;
         } else {
+            println!("flush {} {:?} {:?} {} {} {}", char, trm, self.last_ctm, width, font_size, spacing);
             self.flush_string();
             self.buf = char.to_owned();
             self.buf_font_size = font_size;
             self.buf_ctm = *trm;
         }
+        let position = trm.post_mul(&self.flip_ctm);
+        let transformed_font_size_vec = trm.transform_vector(&vec2(font_size, font_size));
+        // get the length of one sized of the square with the same area with a rectangle of size (x, y)
+        let transformed_font_size = (transformed_font_size_vec.x * transformed_font_size_vec.y).sqrt();
+        let (x, y) = (position.m31, position.m32);
+        write!(self.file, "<div style='position: absolute; color: red; left: {}px; top: {}px; font-size: {}px'>{}</div>",
+               x, y, transformed_font_size, char);
         self.last_ctm = trm.pre_mul(&Transform2D::create_translation(width * font_size + spacing, 0.));
     }
     fn begin_word(&mut self) {}
-    fn end_word(&mut self) {
-        self.flush_string();
-        self.buf = "".to_owned();
-
-    }
+    fn end_word(&mut self) {}
     fn end_line(&mut self) {}
 }
 
