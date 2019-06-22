@@ -117,7 +117,7 @@ pub fn name_to_unicode(name: &str) -> Option<u16> {
 ("DieresisAcute", 0xf6cc),
 ("DieresisGrave", 0xf6cd),
 ("Dieresissmall", 0xf7a8),
-("Digamma", 0x1d7cb),
+("Digamma", 0x03dd),
 ("Digammagreek", 0x03dc),
 ("Djecyrillic", 0x0402),
 ("Dlinebelow", 0x1e0e),
