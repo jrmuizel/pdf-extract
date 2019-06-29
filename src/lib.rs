@@ -31,7 +31,7 @@ macro_rules! dlog {
 }
 
 fn get_info(doc: &Document) -> Option<&Dictionary> {
-    match doc.trailer.get("Info") {
+    match doc.trailer.get(b"Info") {
         Some(&Object::Reference(ref id)) => {
             match doc.get_object(*id) {
                 Some(&Object::Dictionary(ref info)) => { return Some(info); }
@@ -44,7 +44,7 @@ fn get_info(doc: &Document) -> Option<&Dictionary> {
 }
 
 fn get_catalog(doc: &Document) -> &Dictionary {
-    match doc.trailer.get("Root").unwrap() {
+    match doc.trailer.get(b"Root").unwrap() {
         &Object::Reference(ref id) => {
             match doc.get_object(*id) {
                 Some(&Object::Dictionary(ref catalog)) => { return catalog; }
@@ -58,7 +58,7 @@ fn get_catalog(doc: &Document) -> &Dictionary {
 
 fn get_pages(doc: &Document) -> &Dictionary {
     let catalog = get_catalog(doc);
-    match catalog.get("Pages").unwrap() {
+    match catalog.get(b"Pages").unwrap() {
         &Object::Reference(ref id) => {
             match doc.get_object(*id) {
                 Some(&Object::Dictionary(ref pages)) => { return pages; }
@@ -139,13 +139,13 @@ fn maybe_deref<'a>(doc: &'a Document, o: &'a Object) -> &'a Object {
     }
 }
 
-fn maybe_get_obj<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<&'a Object> {
+fn maybe_get_obj<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<&'a Object> {
     dict.get(key).map(|o| maybe_deref(doc, o))
 }
 
 // an intermediate trait that can be used to chain conversions that may have failed
 trait FromOptObj<'a> {
-    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &str) -> Self;
+    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &[u8]) -> Self;
 }
 
 // conditionally convert to Self returns None if the conversion failed
@@ -154,14 +154,14 @@ trait FromObj<'a> where Self: std::marker::Sized {
 }
 
 impl<'a, T: FromObj<'a>> FromOptObj<'a> for Option<T> {
-    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &str) -> Self {
+    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &[u8]) -> Self {
         obj.and_then(|x| T::from_obj(doc,x))
     }
 }
 
 impl<'a, T: FromObj<'a>> FromOptObj<'a> for T {
-    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &str) -> Self {
-        T::from_obj(doc, obj.expect(key)).expect("wrong type")
+    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &[u8]) -> Self {
+        T::from_obj(doc, obj.expect(&String::from_utf8_lossy(key))).expect("wrong type")
     }
 }
 
@@ -239,27 +239,27 @@ impl<'a> FromObj<'a> for &'a Object {
     }
 }
 
-fn get<'a, T: FromOptObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> T {
+fn get<'a, T: FromOptObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> T {
     T::from_opt_obj(doc, dict.get(key), key)
 }
 
-fn get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> String {
+fn get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> String {
     pdf_to_utf8(dict.get(key).map(|o| maybe_deref(doc, o)).unwrap_or_else(|| panic!("deref")).as_name().expect("name"))
 }
 
-fn get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> &'a [u8] {
+fn get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> &'a [u8] {
     dict.get(key).map(|o| maybe_deref(doc, o)).unwrap().as_name().unwrap()
 }
 
-fn maybe_get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<String> {
+fn maybe_get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<String> {
     maybe_get_obj(doc, dict, key).and_then(|n| n.as_name()).map(|n| pdf_to_utf8(n))
 }
 
-fn maybe_get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<&'a [u8]> {
+fn maybe_get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<&'a [u8]> {
     maybe_get_obj(doc, dict, key).and_then(|n| n.as_name())
 }
 
-fn maybe_get_array<'a>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<&'a Vec<Object>> {
+fn maybe_get_array<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<&'a Vec<Object>> {
     maybe_get_obj(doc, dict, key).and_then(|n| n.as_array())
 }
 
@@ -284,7 +284,7 @@ struct PdfType3Font<'a> {
 
 
 fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Rc<PdfFont + 'a> {
-    let subtype = get_name_string(doc, font, "Subtype");
+    let subtype = get_name_string(doc, font, b"Subtype");
     dlog!("MakeFont({})", subtype);
     if subtype == "Type0" {
         Rc::new(PdfCIDFont::new(doc, font))
@@ -336,17 +336,17 @@ fn encoding_to_unicode_table(name: &[u8]) -> Vec<u16> {
 */
 impl<'a> PdfSimpleFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfSimpleFont<'a> {
-        let base_name = get_name_string(doc, font, "BaseFont");
-        let subtype = get_name_string(doc, font, "Subtype");
+        let base_name = get_name_string(doc, font, b"BaseFont");
+        let subtype = get_name_string(doc, font, b"Subtype");
 
-        let encoding: Option<&Object> = get(doc, font, "Encoding");
+        let encoding: Option<&Object> = get(doc, font, b"Encoding");
         dlog!("base_name {} {} enc:{:?} {:?}", base_name, subtype, encoding, font);
-        let descriptor: Option<&Dictionary> = get(doc, font, "FontDescriptor");
+        let descriptor: Option<&Dictionary> = get(doc, font, b"FontDescriptor");
         let mut type1_encoding = None;
         if let Some(descriptor) = descriptor {
             dlog!("descriptor {:?}", descriptor);
             if subtype == "Type1" {
-                let file = maybe_get_obj(doc, descriptor, "FontFile");
+                let file = maybe_get_obj(doc, descriptor, b"FontFile");
                 match file {
                     Some(&Object::Stream(ref s)) => {
                         let s = get_contents(s);
@@ -357,7 +357,7 @@ impl<'a> PdfSimpleFont<'a> {
                     _ => { dlog!("font file {:?}", file) }
                 }
             } else if subtype == "TrueType" {
-                let file = maybe_get_obj(doc, descriptor, "FontFile2");
+                let file = maybe_get_obj(doc, descriptor, b"FontFile2");
                 match file {
                     Some(&Object::Stream(ref s)) => {
                         let _s = get_contents(s);
@@ -367,7 +367,7 @@ impl<'a> PdfSimpleFont<'a> {
                 }
             }
 
-            let font_file3 = get::<Option<&Object>>(doc, descriptor, "FontFile3");
+            let font_file3 = get::<Option<&Object>>(doc, descriptor, b"FontFile3");
             match font_file3 {
                 Some(&Object::Stream(ref s)) => {
                     dlog!("font file {:?}", s);
@@ -376,7 +376,7 @@ impl<'a> PdfSimpleFont<'a> {
                 _ => { dlog!("unexpected") }
             }
 
-            let charset = maybe_get_obj(doc, descriptor, "CharSet");
+            let charset = maybe_get_obj(doc, descriptor, b"CharSet");
             let charset = match charset {
                 Some(&Object::String(ref s, _)) => { Some(pdf_to_utf8(&s)) }
                 _ => { None }
@@ -394,13 +394,13 @@ impl<'a> PdfSimpleFont<'a> {
             }
             Some(&Object::Dictionary(ref encoding)) => {
                 //dlog!("Encoding {:?}", encoding);
-                let mut table = if let Some(base_encoding) = maybe_get_name(doc, encoding, "BaseEncoding") {
+                let mut table = if let Some(base_encoding) = maybe_get_name(doc, encoding, b"BaseEncoding") {
                     dlog!("BaseEncoding {:?}", base_encoding);
                     encoding_to_unicode_table(base_encoding)
                 } else {
                     Vec::from(PDFDocEncoding)
                 };
-                let differences = maybe_get_array(doc, encoding, "Differences");
+                let differences = maybe_get_array(doc, encoding, b"Differences");
                 if let Some(differences) = differences {
                     dlog!("Differences");
                     let mut code = 0;
@@ -438,7 +438,7 @@ impl<'a> PdfSimpleFont<'a> {
                         }
                     }
                 }
-                let name = pdf_to_utf8(encoding.get("Type").unwrap().as_name().unwrap());
+                let name = pdf_to_utf8(encoding.get(b"Type").unwrap().as_name().unwrap());
                 dlog!("name: {}", name);
 
                 encoding_table = Some(table);
@@ -517,9 +517,9 @@ impl<'a> PdfSimpleFont<'a> {
             }
         } else {
             // Some PDF's don't have these like fips-197.pdf
-            let mut first_char: i64 = get(doc, font, "FirstChar");
-            let mut last_char: i64 = get(doc, font, "LastChar");
-            let mut widths: Vec<f64> = get(doc, font, "Widths");
+            let mut first_char: i64 = get(doc, font, b"FirstChar");
+            let mut last_char: i64 = get(doc, font, b"LastChar");
+            let mut widths: Vec<f64> = get(doc, font, b"Widths");
             let mut i = 0;
             dlog!("first_char {:?}, last_char: {:?}, widths: {} {:?}", first_char, last_char, widths.len(), widths);
 
@@ -534,25 +534,25 @@ impl<'a> PdfSimpleFont<'a> {
     }
 
     fn get_type(&self) -> String {
-        get_name_string(self.doc, self.font, "Type")
+        get_name_string(self.doc, self.font, b"Type")
     }
     fn get_basefont(&self) -> String {
-        get_name_string(self.doc, self.font, "BaseFont")
+        get_name_string(self.doc, self.font, b"BaseFont")
     }
     fn get_subtype(&self) -> String {
-        get_name_string(self.doc, self.font, "Subtype")
+        get_name_string(self.doc, self.font, b"Subtype")
     }
     fn get_widths(&self) -> Option<&Vec<Object>> {
-        maybe_get_obj(self.doc, self.font, "Widths").map(|widths| widths.as_array().expect("Widths should be an array"))
+        maybe_get_obj(self.doc, self.font, b"Widths").map(|widths| widths.as_array().expect("Widths should be an array"))
     }
     /* For type1: This entry is obsolescent and its use is no longer recommended. (See
      * implementation note 42 in Appendix H.) */
     fn get_name(&self) -> Option<String> {
-        maybe_get_name_string(self.doc, self.font, "Name")
+        maybe_get_name_string(self.doc, self.font, b"Name")
     }
 
     fn get_descriptor(&self) -> Option<PdfFontDescriptor> {
-        maybe_get_obj(self.doc, self.font, "FontDescriptor").and_then(|desc| desc.as_dict()).map(|desc| PdfFontDescriptor{desc: desc, doc: self.doc})
+        maybe_get_obj(self.doc, self.font, b"FontDescriptor").and_then(|desc| desc.as_dict()).map(|desc| PdfFontDescriptor{desc: desc, doc: self.doc})
     }
 }
 
@@ -562,7 +562,7 @@ impl<'a> PdfType3Font<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfType3Font<'a> {
 
         let unicode_map = get_unicode_map(doc, font);
-        let encoding: Option<&Object> = get(doc, font, "Encoding");
+        let encoding: Option<&Object> = get(doc, font, b"Encoding");
 
         let mut encoding_table = None;
         match encoding {
@@ -572,13 +572,13 @@ impl<'a> PdfType3Font<'a> {
             }
             Some(&Object::Dictionary(ref encoding)) => {
                 //dlog!("Encoding {:?}", encoding);
-                let mut table = if let Some(base_encoding) = maybe_get_name(doc, encoding, "BaseEncoding") {
+                let mut table = if let Some(base_encoding) = maybe_get_name(doc, encoding, b"BaseEncoding") {
                     dlog!("BaseEncoding {:?}", base_encoding);
                     encoding_to_unicode_table(base_encoding)
                 } else {
                     Vec::from(PDFDocEncoding)
                 };
-                let differences = maybe_get_array(doc, encoding, "Differences");
+                let differences = maybe_get_array(doc, encoding, b"Differences");
                 if let Some(differences) = differences {
                     dlog!("Differences");
                     let mut code = 0;
@@ -603,7 +603,7 @@ impl<'a> PdfType3Font<'a> {
                         }
                     }
                 }
-                let name = pdf_to_utf8(encoding.get("Type").unwrap().as_name().unwrap());
+                let name = pdf_to_utf8(encoding.get(b"Type").unwrap().as_name().unwrap());
                 dlog!("name: {}", name);
 
                 encoding_table = Some(table);
@@ -611,9 +611,9 @@ impl<'a> PdfType3Font<'a> {
             _ => { panic!() }
         }
 
-        let mut first_char: i64 = get(doc, font, "FirstChar");
-        let mut last_char: i64 = get(doc, font, "LastChar");
-        let mut widths: Vec<f64> = get(doc, font, "Widths");
+        let mut first_char: i64 = get(doc, font, b"FirstChar");
+        let mut last_char: i64 = get(doc, font, b"LastChar");
+        let mut widths: Vec<f64> = get(doc, font, b"Widths");
 
         let mut width_map = HashMap::new();
 
@@ -764,7 +764,7 @@ struct PdfCIDFont<'a> {
 }
 
 fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMap<u32, String>> {
-    let to_unicode = maybe_get_obj(doc, font, "ToUnicode");
+    let to_unicode = maybe_get_obj(doc, font, b"ToUnicode");
     dlog!("ToUnicode: {:?}", to_unicode);
     let mut unicode_map = None;
     match to_unicode {
@@ -814,10 +814,10 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
 
 impl<'a> PdfCIDFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfCIDFont<'a> {
-        let base_name = get_name_string(doc, font, "BaseFont");
-        let descendants = maybe_get_array(doc, font, "DescendantFonts").expect("Descendant fonts required");
+        let base_name = get_name_string(doc, font, b"BaseFont");
+        let descendants = maybe_get_array(doc, font, b"DescendantFonts").expect("Descendant fonts required");
         let ciddict = maybe_deref(doc, &descendants[0]).as_dict().expect("should be CID dict");
-        let encoding = maybe_get_obj(doc, font, "Encoding").expect("Encoding required in type0 fonts");
+        let encoding = maybe_get_obj(doc, font, b"Encoding").expect("Encoding required in type0 fonts");
         dlog!("base_name {} {:?}", base_name, font);
 
         match encoding {
@@ -842,11 +842,11 @@ impl<'a> PdfCIDFont<'a> {
 
         dlog!("descendents {:?} {:?}", descendants, ciddict);
 
-        let font_dict = maybe_get_obj(doc, ciddict, "FontDescriptor").expect("required");
+        let font_dict = maybe_get_obj(doc, ciddict, b"FontDescriptor").expect("required");
         dlog!("{:?}", font_dict);
         let f = font_dict.as_dict().expect("must be dict");
-        let default_width = get::<Option<i64>>(doc, ciddict, "DW").unwrap_or(1000);
-        let w: Option<Vec<&Object>> = get(doc, ciddict, "W");
+        let default_width = get::<Option<i64>>(doc, ciddict, b"DW").unwrap_or(1000);
+        let w: Option<Vec<&Object>> = get(doc, ciddict, b"W");
         dlog!("widths {:?}", w);
         let mut widths = HashMap::new();
         let mut i = 0;
@@ -932,7 +932,7 @@ struct PdfFontDescriptor<'a> {
 
 impl<'a> PdfFontDescriptor<'a> {
     fn get_file(&self) -> Option<&'a Object> {
-        maybe_get_obj(self.doc, self.desc, "FontFile")
+        maybe_get_obj(self.doc, self.desc, b"FontFile")
     }
 }
 
@@ -994,21 +994,21 @@ impl Function {
             &Object::Stream(ref stream) => &stream.dict,
             _ => panic!()
         };
-        let function_type: i64 = get(doc, dict,"FunctionType");
+        let function_type: i64 = get(doc, dict, b"FunctionType");
         let f = match function_type {
             0 => {
                 let stream = match obj {
                     &Object::Stream(ref stream) => stream,
                     _ => panic!()
                 };
-                let range: Vec<f64> = get(doc, dict, "Range");
-                let domain: Vec<f64> = get(doc, dict, "Domain");
+                let range: Vec<f64> = get(doc, dict, b"Range");
+                let domain: Vec<f64> = get(doc, dict, b"Domain");
                 let contents = get_contents(stream);
-                let size: Vec<i64> = get(doc, dict, "Size");
-                let bits_per_sample = get(doc, dict, "BitsPerSample");
+                let size: Vec<i64> = get(doc, dict, b"Size");
+                let bits_per_sample = get(doc, dict, b"BitsPerSample");
                 // We ignore 'Order' like pdfium, poppler and pdf.js
 
-                let encode = get::<Option<Vec<f64>>>(doc, dict, "Encode");
+                let encode = get::<Option<Vec<f64>>>(doc, dict, b"Encode");
                 // maybe there's some better way to write this.
                 let encode = encode.unwrap_or_else(|| {
                     let mut default = Vec::new();
@@ -1017,14 +1017,14 @@ impl Function {
                     }
                     default
                 });
-                let decode = get::<Option<Vec<f64>>>(doc, dict, "Decode").unwrap_or_else(|| range.clone());
+                let decode = get::<Option<Vec<f64>>>(doc, dict, b"Decode").unwrap_or_else(|| range.clone());
 
                 Function::Type0(Type0Func { domain, range, size, contents, bits_per_sample, encode, decode })
             }
             2 => {
-                let c0 = get::<Option<Vec<f64>>>(doc, dict, "C0");
-                let c1 = get::<Option<Vec<f64>>>(doc, dict, "C1");
-                let n = get::<f64>(doc, dict, "N");
+                let c0 = get::<Option<Vec<f64>>>(doc, dict, b"C0");
+                let c1 = get::<Option<Vec<f64>>>(doc, dict, b"C1");
+                let n = get::<f64>(doc, dict, b"N");
                 Function::Type2(Type2Func { c0, c1, n})
             }
             _ => { panic!("unhandled function type {}", function_type) }
@@ -1135,8 +1135,9 @@ pub struct MediaBox {
 
 fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
     for (k, v) in state.iter() {
-        match k.as_ref() {
-            "SMask" => { match v {
+        let k : &[u8] = k.as_ref();
+        match k {
+            b"SMask" => { match v {
                 &Object::Name(ref name) => {
                     if name == b"None" {
                         gs.smask = None;
@@ -1146,7 +1147,7 @@ fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
                 }
                 _ => { panic!("unexpected smask type {:?}", v) }
             }}
-            "Type" => { match v {
+            b"Type" => { match v {
                 &Object::Name(ref name) => {
                     assert_eq!(name, b"ExtGState")
                 }
@@ -1229,15 +1230,15 @@ pub enum ColorSpace {
     ICCBased(Vec<u8>)
 }
 
-fn make_colorspace<'a>(doc: &'a Document, name: String, resources: &'a Dictionary) -> ColorSpace {
-    match name.as_ref() {
-        "DeviceGray" => ColorSpace::DeviceGray,
-        "DeviceRGB" => ColorSpace::DeviceRGB,
-        "DeviceCMYK" => ColorSpace::DeviceCMYK,
-        "Pattern" => ColorSpace::Pattern,
+fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary) -> ColorSpace {
+    match name {
+        b"DeviceGray" => ColorSpace::DeviceGray,
+        b"DeviceRGB" => ColorSpace::DeviceRGB,
+        b"DeviceCMYK" => ColorSpace::DeviceCMYK,
+        b"Pattern" => ColorSpace::Pattern,
         _ => {
-            let colorspaces: &Dictionary = get(&doc, resources, "ColorSpace");
-            let cs = maybe_get_array(doc, colorspaces,&name[..]).unwrap_or_else(|| panic!("missing colorspace {:?}", &name[..]));;
+            let colorspaces: &Dictionary = get(&doc, resources, b"ColorSpace");
+            let cs = maybe_get_array(doc, colorspaces, &name[..]).unwrap_or_else(|| panic!("missing colorspace {:?}", &name[..]));;
             let cs_name = pdf_to_utf8(cs[0].as_name().expect("first arg must be a name"));
             match cs_name.as_ref() {
                 "Separation" => {
@@ -1257,33 +1258,33 @@ fn make_colorspace<'a>(doc: &'a Document, name: String, resources: &'a Dictionar
                 "CalGray" => {
                     let dict = cs[1].as_dict().expect("second arg must be a dict");
                     ColorSpace::CalGray(CalGray {
-                        white_point: get(&doc, dict, "WhitePoint"),
-                        black_point: get(&doc, dict, "BackPoint"),
-                        gamma: get(&doc, dict, "Gamma"),
+                        white_point: get(&doc, dict, b"WhitePoint"),
+                        black_point: get(&doc, dict, b"BackPoint"),
+                        gamma: get(&doc, dict, b"Gamma"),
                     })
                 }
                 "CalRGB" => {
                     let dict = cs[1].as_dict().expect("second arg must be a dict");
                     ColorSpace::CalRGB(CalRGB {
-                        white_point: get(&doc, dict, "WhitePoint"),
-                        black_point: get(&doc, dict, "BackPoint"),
-                        gamma: get(&doc, dict, "Gamma"),
-                        matrix: get(&doc, dict, "Matrix"),
+                        white_point: get(&doc, dict, b"WhitePoint"),
+                        black_point: get(&doc, dict, b"BackPoint"),
+                        gamma: get(&doc, dict, b"Gamma"),
+                        matrix: get(&doc, dict, b"Matrix"),
                     })
                 }
                 "Lab" => {
                     let dict = cs[1].as_dict().expect("second arg must be a dict");
                     ColorSpace::Lab(Lab {
-                        white_point: get(&doc, dict, "WhitePoint"),
-                        black_point: get(&doc, dict, "BackPoint"),
-                        range: get(&doc, dict, "Range"),
+                        white_point: get(&doc, dict, b"WhitePoint"),
+                        black_point: get(&doc, dict, b"BackPoint"),
+                        range: get(&doc, dict, b"Range"),
                     })
                 }
                 "Pattern" => {
                     ColorSpace::Pattern
                 }
                 _ => {
-                    panic!("color_space {} {:?} {:?}", name, cs_name, cs)
+                    panic!("color_space {:?} {:?} {:?}", name, cs_name, cs)
                 }
             }
         }
@@ -1353,11 +1354,11 @@ impl<'a> Processor<'a> {
                     dlog!("matrix {:?}", gs.ctm);
                 }
                 "CS" => {
-                    let name = pdf_to_utf8(operation.operands[0].as_name().unwrap());
+                    let name = operation.operands[0].as_name().unwrap();
                     gs.stroke_colorspace = make_colorspace(doc, name, resources);
                 }
                 "cs" => {
-                    let name = pdf_to_utf8(operation.operands[0].as_name().unwrap());
+                    let name = operation.operands[0].as_name().unwrap();
                     gs.fill_colorspace = make_colorspace(doc, name, resources);
                 }
                 "SC" | "SCN" => {
@@ -1429,9 +1430,9 @@ impl<'a> Processor<'a> {
                     gs.ts.leading = as_num(&operation.operands[0]);
                 }
                 "Tf" => {
-                    let fonts: &Dictionary = get(&doc, resources, "Font");
-                    let name = str::from_utf8(operation.operands[0].as_name().unwrap()).unwrap();
-                    let font = font_table.entry(name.to_string()).or_insert_with(|| make_font(doc, get::<&Dictionary>(doc, fonts, name))).clone();
+                    let fonts: &Dictionary = get(&doc, resources, b"Font");
+                    let name = operation.operands[0].as_name().unwrap();
+                    let font = font_table.entry(name.to_owned()).or_insert_with(|| make_font(doc, get::<&Dictionary>(doc, fonts, name))).clone();
                     {
                         /*let file = font.get_descriptor().and_then(|desc| desc.get_file());
                     if let Some(file) = file {
@@ -1512,9 +1513,9 @@ impl<'a> Processor<'a> {
                     }
                 }
                 "gs" => {
-                    let ext_gstate: &Dictionary = get(doc, resources, "ExtGState");
-                    let name = pdf_to_utf8(operation.operands[0].as_name().unwrap());
-                    let state: &Dictionary = get(doc, ext_gstate, &name.clone());
+                    let ext_gstate: &Dictionary = get(doc, resources, b"ExtGState");
+                    let name = operation.operands[0].as_name().unwrap();
+                    let state: &Dictionary = get(doc, ext_gstate, name);
                     apply_state(&mut gs, state);
                 }
                 "i" => { dlog!("unhandled graphics state flattness operator {:?}", operation); }
@@ -1908,9 +1909,9 @@ pub fn print_metadata(doc: &Document) {
             }
         }
     }
-    dlog!("Page count: {}", get::<i64>(&doc, &get_pages(&doc), "Count"));
+    dlog!("Page count: {}", get::<i64>(&doc, &get_pages(&doc), b"Count"));
     dlog!("Pages: {:?}", get_pages(&doc));
-    dlog!("Type: {:?}", get_pages(&doc).get("Type").and_then(|x| x.as_name()).unwrap());
+    dlog!("Type: {:?}", get_pages(&doc).get(b"Type").and_then(|x| x.as_name()).unwrap());
 }
 
 /// Extract the text from a pdf at `path` and return a `String` with the results
@@ -1924,12 +1925,12 @@ pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<
     return Ok(s);
 }
 
-fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &str) -> Option<T> {
+fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<T> {
     let o: Option<T> = get(doc, dict, key);
     if let Some(o) = o {
         Some(o)
     } else {
-        let parent = dict.get("Parent")
+        let parent = dict.get(b"Parent")
             .and_then(|parent| parent.as_reference())
             .and_then(|id| doc.get_dictionary(id))?;
         get_inherited(doc, parent, key)
@@ -1946,14 +1947,14 @@ pub fn output_doc(doc: &Document, output: &mut OutputDev) {
         let page_dict = doc.get_object(dict.1).unwrap().as_dict().unwrap();
         dlog!("page {} {:?}", page_num, page_dict);
         // XXX: Some pdfs lack a Resources directory
-        let resources = get_inherited(doc, page_dict, "Resources").unwrap_or(empty_resources);
+        let resources = get_inherited(doc, page_dict, b"Resources").unwrap_or(empty_resources);
         dlog!("resources {:?}", resources);
 
         // pdfium searches up the page tree for MediaBoxes as needed
-        let media_box: Vec<f64> = get_inherited(doc, page_dict, "MediaBox").expect("MediaBox");
+        let media_box: Vec<f64> = get_inherited(doc, page_dict, b"MediaBox").expect("MediaBox");
         let media_box = MediaBox { llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3] };
 
-        let art_box = get::<Option<Vec<f64>>>(&doc, page_dict, "ArtBox")
+        let art_box = get::<Option<Vec<f64>>>(&doc, page_dict, b"ArtBox")
             .map(|x| (x[0], x[1], x[2], x[3]));
 
         output.begin_page(page_num, &media_box, art_box);
