@@ -15,7 +15,6 @@ debug = true
 adobe-cmap-parser = "0.3.3"
 encoding = "0.2.33"
 euclid = "0.15.1"
-flate2 = "0.2.17"
 lopdf = "0.22"
 postscript = "0.11.1"
 type1-encoding-parser = "0.1.0"
