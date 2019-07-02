@@ -1115,7 +1115,7 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
         let tj = 0.;
         let ty = 0.;
         let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + spacing);
-        println!("horizontal {} adjust {} {} {} {}", ts.horizontal_scaling, tx, w0, ts.font_size, spacing);
+        dlog!("horizontal {} adjust {} {} {} {}", ts.horizontal_scaling, tx, w0, ts.font_size, spacing);
         // dlog!("w0: {}, tx: {}", w0, tx);
         ts.tm = ts.tm.pre_mul(&Transform2D::create_translation(tx, ty));
         let trm = ts.tm.pre_mul(&gs.ctm);
