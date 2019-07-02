@@ -1127,10 +1127,10 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
 
 #[derive(Debug, Clone, Copy)]
 pub struct MediaBox {
-    llx: f64,
-    lly: f64,
-    urx: f64,
-    ury: f64
+    pub llx: f64,
+    pub lly: f64,
+    pub urx: f64,
+    pub ury: f64
 }
 
 fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
