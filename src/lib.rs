@@ -233,6 +233,12 @@ impl<'a> FromObj<'a> for &'a Dictionary {
     }
 }
 
+impl<'a> FromObj<'a> for &'a Stream {
+    fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<&'a Stream> {
+        maybe_deref(doc, obj).as_stream()
+    }
+}
+
 impl<'a> FromObj<'a> for &'a Object {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<&'a Object> {
         Some(maybe_deref(doc, obj))
@@ -595,7 +601,7 @@ impl<'a> PdfType3Font<'a> {
                                 }
                                 dlog!("{} = {} ({:?})", code, name, unicode);
                                 if let Some(ref unicode_map) = unicode_map {
-                                    dlog!("{} {}", code, unicode_map[&(code as u32)]);
+                                    dlog!("{} {}", code, unicode_map.get(&(code as u32)));
                                 }
                                 code += 1;
                             }
@@ -1057,7 +1063,7 @@ struct TextState<'a>
 // XXX: We'd ideally implement this without having to copy the uncompressed data
 fn get_contents(contents: &Stream) -> Vec<u8> {
     if contents.filter().is_some() {
-        contents.decompressed_content().unwrap()
+        contents.decompressed_content().unwrap_or_else(||contents.content.clone())
     } else {
         contents.content.clone()
     }
@@ -1579,6 +1585,16 @@ impl<'a> Processor<'a> {
                 }
                 "EMC" => {
                     mc_stack.pop();
+                }
+                "Do" => {
+                    // `Do` process an entire subdocument, so we do a recursive call to `process_stream`
+                    // with the subdocument content and resources
+                    let xobject: &Dictionary = get(&doc, resources, b"XObject");
+                    let name = operation.operands[0].as_name().unwrap();
+                    let xf: &Stream = get(&doc, xobject, name);
+                    let resources = maybe_get_obj(&doc, &xf.dict, b"Resources").and_then(|n| n.as_dict()).unwrap_or(resources);
+                    let contents = get_contents(xf);
+                    self.process_stream(&doc, contents, resources, &media_box, output, page_num);
                 }
                 _ => { dlog!("unknown operation {:?}", operation); }
 
