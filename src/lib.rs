@@ -236,7 +236,7 @@ impl<'a> FromObj<'a> for &'a Dictionary {
 
 impl<'a> FromObj<'a> for &'a Stream {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<&'a Stream> {
-        maybe_deref(doc, obj).as_stream()
+        maybe_deref(doc, obj).as_stream().ok()
     }
 }
 
@@ -1064,7 +1064,7 @@ struct TextState<'a>
 // XXX: We'd ideally implement this without having to copy the uncompressed data
 fn get_contents(contents: &Stream) -> Vec<u8> {
     if contents.filter().is_ok() {
-        contents.decompressed_content().unwrap_or_else(||contents.content.clone())
+        contents.decompressed_content().unwrap_or_else(|_|contents.content.clone())
     } else {
         contents.content.clone()
     }
@@ -1593,7 +1593,7 @@ impl<'a> Processor<'a> {
                     let xobject: &Dictionary = get(&doc, resources, b"XObject");
                     let name = operation.operands[0].as_name().unwrap();
                     let xf: &Stream = get(&doc, xobject, name);
-                    let resources = maybe_get_obj(&doc, &xf.dict, b"Resources").and_then(|n| n.as_dict()).unwrap_or(resources);
+                    let resources = maybe_get_obj(&doc, &xf.dict, b"Resources").and_then(|n| n.as_dict().ok()).unwrap_or(resources);
                     let contents = get_contents(xf);
                     self.process_stream(&doc, contents, resources, &media_box, output, page_num);
                 }
