@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::rc::Rc;
 use std::marker::PhantomData;
+use std::result::Result;
 mod core_fonts;
 mod glyphnames;
 mod zapfglyphnames;
@@ -32,9 +33,9 @@ macro_rules! dlog {
 
 fn get_info(doc: &Document) -> Option<&Dictionary> {
     match doc.trailer.get(b"Info") {
-        Some(&Object::Reference(ref id)) => {
+        Ok(&Object::Reference(ref id)) => {
             match doc.get_object(*id) {
-                Some(&Object::Dictionary(ref info)) => { return Some(info); }
+                Ok(&Object::Dictionary(ref info)) => { return Some(info); }
                 _ => {}
             }
         }
@@ -47,7 +48,7 @@ fn get_catalog(doc: &Document) -> &Dictionary {
     match doc.trailer.get(b"Root").unwrap() {
         &Object::Reference(ref id) => {
             match doc.get_object(*id) {
-                Some(&Object::Dictionary(ref catalog)) => { return catalog; }
+                Ok(&Object::Dictionary(ref catalog)) => { return catalog; }
                 _ => {}
             }
         }
@@ -61,7 +62,7 @@ fn get_pages(doc: &Document) -> &Dictionary {
     match catalog.get(b"Pages").unwrap() {
         &Object::Reference(ref id) => {
             match doc.get_object(*id) {
-                Some(&Object::Dictionary(ref pages)) => { return pages; }
+                Ok(&Object::Dictionary(ref pages)) => { return pages; }
                 other => {dlog!("pages: {:?}", other)}
             }
         }
@@ -140,7 +141,7 @@ fn maybe_deref<'a>(doc: &'a Document, o: &'a Object) -> &'a Object {
 }
 
 fn maybe_get_obj<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<&'a Object> {
-    dict.get(key).map(|o| maybe_deref(doc, o))
+    dict.get(key).map(|o| maybe_deref(doc, o)).ok()
 }
 
 // an intermediate trait that can be used to chain conversions that may have failed
@@ -171,7 +172,7 @@ impl<'a, T: FromObj<'a>> FromObj<'a> for Vec<T> {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<Self> {
         maybe_deref(doc, obj).as_array().map(|x| x.iter()
             .map(|x| T::from_obj(doc, x).expect("wrong type"))
-            .collect())
+            .collect()).ok()
     }
 }
 
@@ -194,7 +195,7 @@ impl<'a, T: FromObj<'a>> FromObj<'a> for [T; 4] {
             let mut all = x.iter()
                 .map(|x| T::from_obj(doc, x).expect("wrong type"));
             [all.next().unwrap(), all.next().unwrap(), all.next().unwrap(), all.next().unwrap()]
-        })
+        }).ok()
     }
 }
 
@@ -204,7 +205,7 @@ impl<'a, T: FromObj<'a>> FromObj<'a> for [T; 3] {
             let mut all = x.iter()
                 .map(|x| T::from_obj(doc, x).expect("wrong type"));
             [all.next().unwrap(), all.next().unwrap(), all.next().unwrap()]
-        })
+        }).ok()
     }
 }
 
@@ -229,7 +230,7 @@ impl<'a> FromObj<'a> for i64 {
 
 impl<'a> FromObj<'a> for &'a Dictionary {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<&'a Dictionary> {
-        maybe_deref(doc, obj).as_dict()
+        maybe_deref(doc, obj).as_dict().ok()
     }
 }
 
@@ -246,11 +247,11 @@ impl<'a> FromObj<'a> for &'a Object {
 }
 
 fn get<'a, T: FromOptObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> T {
-    T::from_opt_obj(doc, dict.get(key), key)
+    T::from_opt_obj(doc, dict.get(key).ok(), key)
 }
 
 fn get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> String {
-    pdf_to_utf8(dict.get(key).map(|o| maybe_deref(doc, o)).unwrap_or_else(|| panic!("deref")).as_name().expect("name"))
+    pdf_to_utf8(dict.get(key).map(|o| maybe_deref(doc, o)).unwrap_or_else(|_| panic!("deref")).as_name().expect("name"))
 }
 
 fn get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> &'a [u8] {
@@ -258,15 +259,15 @@ fn get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> &'a [u8]
 }
 
 fn maybe_get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<String> {
-    maybe_get_obj(doc, dict, key).and_then(|n| n.as_name()).map(|n| pdf_to_utf8(n))
+    maybe_get_obj(doc, dict, key).and_then(|n| n.as_name().ok()).map(|n| pdf_to_utf8(n))
 }
 
 fn maybe_get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<&'a [u8]> {
-    maybe_get_obj(doc, dict, key).and_then(|n| n.as_name())
+    maybe_get_obj(doc, dict, key).and_then(|n| n.as_name().ok())
 }
 
 fn maybe_get_array<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<&'a Vec<Object>> {
-    maybe_get_obj(doc, dict, key).and_then(|n| n.as_array())
+    maybe_get_obj(doc, dict, key).and_then(|n| n.as_array().ok())
 }
 
 #[derive(Clone)]
@@ -558,7 +559,7 @@ impl<'a> PdfSimpleFont<'a> {
     }
 
     fn get_descriptor(&self) -> Option<PdfFontDescriptor> {
-        maybe_get_obj(self.doc, self.font, b"FontDescriptor").and_then(|desc| desc.as_dict()).map(|desc| PdfFontDescriptor{desc: desc, doc: self.doc})
+        maybe_get_obj(self.doc, self.font, b"FontDescriptor").and_then(|desc| desc.as_dict().ok()).map(|desc| PdfFontDescriptor{desc: desc, doc: self.doc})
     }
 }
 
@@ -1062,7 +1063,7 @@ struct TextState<'a>
 
 // XXX: We'd ideally implement this without having to copy the uncompressed data
 fn get_contents(contents: &Stream) -> Vec<u8> {
-    if contents.filter().is_some() {
+    if contents.filter().is_ok() {
         contents.decompressed_content().unwrap_or_else(||contents.content.clone())
     } else {
         contents.content.clone()
@@ -1931,7 +1932,7 @@ pub fn print_metadata(doc: &Document) {
 }
 
 /// Extract the text from a pdf at `path` and return a `String` with the results
-pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<String, std::io::Error> {
+pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<String, lopdf::Error> {
     let mut s = String::new();
     {
         let mut output = PlainTextOutput::new(&mut s);
@@ -1948,7 +1949,7 @@ fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, ke
     } else {
         let parent = dict.get(b"Parent")
             .and_then(|parent| parent.as_reference())
-            .and_then(|id| doc.get_dictionary(id))?;
+            .and_then(|id| doc.get_dictionary(id)).ok()?;
         get_inherited(doc, parent, key)
     }
 }
