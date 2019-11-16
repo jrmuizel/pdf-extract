@@ -7,6 +7,7 @@ documentation = "https://docs.rs/crate/pdf-extract/"
 description = "A library to extract content from pdfs"
 keywords = ["pdf2text", "text", "pdf", "pdf2txt"]
 repository = "https://github.com/jrmuizel/pdf-extract"
+edition = "2018"
 
 [profile.release]
 debug = true

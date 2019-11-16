@@ -1612,8 +1612,8 @@ pub trait OutputDev {
     fn begin_word(&mut self);
     fn end_word(&mut self);
     fn end_line(&mut self);
-    fn stroke(&mut self, ctm: &Transform2D<f64>, colorspace: &ColorSpace, color: &[f64], &Path) {}
-    fn fill(&mut self, ctm: &Transform2D<f64>, colorspace: &ColorSpace, color: &[f64], &Path) {}
+    fn stroke(&mut self, ctm: &Transform2D<f64>, colorspace: &ColorSpace, color: &[f64], path: &Path) {}
+    fn fill(&mut self, ctm: &Transform2D<f64>, colorspace: &ColorSpace, color: &[f64], path: &Path) {}
 }
 
 
