@@ -1167,7 +1167,7 @@ fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
 }
 
 #[derive(Debug)]
-enum PathOp {
+pub enum PathOp {
     MoveTo(f64, f64),
     LineTo(f64, f64),
     // XXX: is it worth distinguishing the different kinds of curve ops?
@@ -1178,7 +1178,7 @@ enum PathOp {
 
 #[derive(Debug)]
 pub struct Path {
-    ops: Vec<PathOp>
+    pub ops: Vec<PathOp>
 }
 
 impl Path {
