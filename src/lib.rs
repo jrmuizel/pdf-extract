@@ -26,6 +26,9 @@ mod glyphnames;
 mod zapfglyphnames;
 mod encodings;
 
+pub struct Space;
+pub type Transform = Transform2D<f64, Space, Space>;
+
 macro_rules! dlog {
     ($($e:expr),*) => { {$(let _ = $e;)*} }
     //($($t:tt)*) => { println!($($t)*) }
@@ -1058,7 +1061,7 @@ struct TextState<'a>
     horizontal_scaling: f64,
     leading: f64,
     rise: f64,
-    tm: euclid::Transform2D<f64>,
+    tm: Transform,
 }
 
 // XXX: We'd ideally implement this without having to copy the uncompressed data
@@ -1073,7 +1076,7 @@ fn get_contents(contents: &Stream) -> Vec<u8> {
 #[derive(Clone)]
 struct GraphicsState<'a>
 {
-    ctm: Transform2D<f64>,
+    ctm: Transform,
     ts: TextState<'a>,
     smask: Option<&'a Dictionary>,
     fill_colorspace: ColorSpace,
@@ -1084,8 +1087,8 @@ struct GraphicsState<'a>
 }
 
 fn show_text(gs: &mut GraphicsState, s: &[u8],
-             tlm: &Transform2D<f64>,
-             flip_ctm: &Transform2D<f64>,
+             tlm: &Transform,
+             flip_ctm: &Transform,
              output: &mut OutputDev) {
     let ts = &mut gs.ts;
     let font = ts.font.as_ref().unwrap();
@@ -1102,8 +1105,8 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
                                                  1.0,
                                                  0.,
                                                  ts.rise);
-        let trm = ts.tm.pre_mul(&gs.ctm);
-        let trm = trm.post_mul(&tsm);
+        let trm = ts.tm.pre_transform(&gs.ctm);
+        let trm = trm.post_transform(&tsm);
         //dlog!("ctm: {:?} tm {:?}", gs.ctm, tm);
         //dlog!("current pos: {:?}", position);
         // 5.9 Extraction of Text Content
@@ -1124,8 +1127,8 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
         let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + spacing);
         dlog!("horizontal {} adjust {} {} {} {}", ts.horizontal_scaling, tx, w0, ts.font_size, spacing);
         // dlog!("w0: {}, tx: {}", w0, tx);
-        ts.tm = ts.tm.pre_mul(&Transform2D::create_translation(tx, ty));
-        let trm = ts.tm.pre_mul(&gs.ctm);
+        ts.tm = ts.tm.pre_transform(&Transform2D::create_translation(tx, ty));
+        let trm = ts.tm.pre_transform(&gs.ctm);
         //dlog!("post pos: {:?}", trm);
 
     }
@@ -1357,7 +1360,7 @@ impl<'a> Processor<'a> {
                                                    as_num(&operation.operands[3]),
                                                    as_num(&operation.operands[4]),
                                                    as_num(&operation.operands[5]));
-                    gs.ctm = gs.ctm.pre_mul(&m);
+                    gs.ctm = gs.ctm.pre_transform(&m);
                     dlog!("matrix {:?}", gs.ctm);
                 }
                 "CS" => {
@@ -1397,7 +1400,7 @@ impl<'a> Processor<'a> {
                                         let tj = i as f64;
                                         let ty = 0.;
                                         let tx = ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size);
-                                        ts.tm = ts.tm.pre_mul(&Transform2D::create_translation(tx, ty));
+                                        ts.tm = ts.tm.pre_transform(&Transform2D::create_translation(tx, ty));
                                         dlog!("adjust text by: {} {:?}", i, ts.tm);
                                     }
                                     &Object::Real(i) => {
@@ -1406,7 +1409,7 @@ impl<'a> Processor<'a> {
                                         let tj = i as f64;
                                         let ty = 0.;
                                         let tx = ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size);
-                                        ts.tm = ts.tm.pre_mul(&Transform2D::create_translation(tx, ty));
+                                        ts.tm = ts.tm.pre_transform(&Transform2D::create_translation(tx, ty));
                                         dlog!("adjust text by: {} {:?}", i, ts.tm);
                                     }
                                     _ => { dlog!("kind of {:?}", e); }
@@ -1479,7 +1482,7 @@ impl<'a> Processor<'a> {
                     let ty = as_num(&operation.operands[1]);
                     dlog!("translation: {} {}", tx, ty);
 
-                    tlm = tlm.pre_mul(&Transform2D::create_translation(tx, ty));
+                    tlm = tlm.pre_transform(&Transform2D::create_translation(tx, ty));
                     gs.ts.tm = tlm;
                     dlog!("Td matrix {:?}", gs.ts.tm);
                     output.end_line();
@@ -1495,7 +1498,7 @@ impl<'a> Processor<'a> {
                     dlog!("translation: {} {}", tx, ty);
                     gs.ts.leading = -ty;
 
-                    tlm = tlm.pre_mul(&Transform2D::create_translation(tx, ty));
+                    tlm = tlm.pre_transform(&Transform2D::create_translation(tx, ty));
                     gs.ts.tm = tlm;
                     dlog!("TD matrix {:?}", gs.ts.tm);
                     output.end_line();
@@ -1505,7 +1508,7 @@ impl<'a> Processor<'a> {
                     let tx = 0.0;
                     let ty = -gs.ts.leading;
 
-                    tlm = tlm.pre_mul(&Transform2D::create_translation(tx, ty));
+                    tlm = tlm.pre_transform(&Transform2D::create_translation(tx, ty));
                     gs.ts.tm = tlm;
                     dlog!("T* matrix {:?}", gs.ts.tm);
                     output.end_line();
@@ -1608,20 +1611,20 @@ impl<'a> Processor<'a> {
 pub trait OutputDev {
     fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, art_box: Option<(f64, f64, f64, f64)>);
     fn end_page(&mut self);
-    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, spacing: f64, font_size: f64, char: &str);
+    fn output_character(&mut self, trm: &Transform, width: f64, spacing: f64, font_size: f64, char: &str);
     fn begin_word(&mut self);
     fn end_word(&mut self);
     fn end_line(&mut self);
-    fn stroke(&mut self, ctm: &Transform2D<f64>, colorspace: &ColorSpace, color: &[f64], path: &Path) {}
-    fn fill(&mut self, ctm: &Transform2D<f64>, colorspace: &ColorSpace, color: &[f64], path: &Path) {}
+    fn stroke(&mut self, ctm: &Transform, colorspace: &ColorSpace, color: &[f64], path: &Path) {}
+    fn fill(&mut self, ctm: &Transform, colorspace: &ColorSpace, color: &[f64], path: &Path) {}
 }
 
 
 pub struct HTMLOutput<'a>  {
     file: &'a mut std::io::Write,
-    flip_ctm: Transform2D<f64>,
-    last_ctm: Transform2D<f64>,
-    buf_ctm: Transform2D<f64>,
+    flip_ctm: Transform,
+    last_ctm: Transform,
+    buf_ctm: Transform,
     buf_font_size: f64,
     buf: String
 }
@@ -1660,8 +1663,8 @@ impl<'a> HTMLOutput<'a> {
     fn flush_string(&mut self) {
         if self.buf.len() != 0 {
 
-            let position = self.buf_ctm.post_mul(&self.flip_ctm);
-            let transformed_font_size_vec = self.buf_ctm.transform_vector(&vec2(self.buf_font_size, self.buf_font_size));
+            let position = self.buf_ctm.post_transform(&self.flip_ctm);
+            let transformed_font_size_vec = self.buf_ctm.transform_vector(vec2(self.buf_font_size, self.buf_font_size));
             // get the length of one sized of the square with the same area with a rectangle of size (x, y)
             let transformed_font_size = (transformed_font_size_vec.x * transformed_font_size_vec.y).sqrt();
             let (x, y) = (position.m31, position.m32);
@@ -1680,17 +1683,17 @@ impl<'a> OutputDev for HTMLOutput<'a> {
         write!(self.file, "<meta charset='utf-8' /> ");
         write!(self.file, "<!-- page {} -->", page_num);
         write!(self.file, "<div id='page{}' style='position: relative; height: {}px; width: {}px; border: 1px black solid'>", page_num, media_box.ury - media_box.lly, media_box.urx - media_box.llx);
-        self.flip_ctm = Transform2D::row_major(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
+        self.flip_ctm = Transform::row_major(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
     }
     fn end_page(&mut self) {
         self.flush_string();
         self.buf = String::new();
-        self.last_ctm = Transform2D::identity();
+        self.last_ctm = Transform::identity();
         write!(self.file, "</div>");
     }
-    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, spacing: f64, font_size: f64, char: &str) {
+    fn output_character(&mut self, trm: &Transform, width: f64, spacing: f64, font_size: f64, char: &str) {
         if trm.approx_eq(&self.last_ctm) {
-            let position = trm.post_mul(&self.flip_ctm);
+            let position = trm.post_transform(&self.flip_ctm);
             let (x, y) = (position.m31, position.m32);
 
             println!("accum {} {:?}", char, (x,y));
@@ -1702,14 +1705,14 @@ impl<'a> OutputDev for HTMLOutput<'a> {
             self.buf_font_size = font_size;
             self.buf_ctm = *trm;
         }
-        let position = trm.post_mul(&self.flip_ctm);
-        let transformed_font_size_vec = trm.transform_vector(&vec2(font_size, font_size));
+        let position = trm.post_transform(&self.flip_ctm);
+        let transformed_font_size_vec = trm.transform_vector(vec2(font_size, font_size));
         // get the length of one sized of the square with the same area with a rectangle of size (x, y)
         let transformed_font_size = (transformed_font_size_vec.x * transformed_font_size_vec.y).sqrt();
         let (x, y) = (position.m31, position.m32);
         write!(self.file, "<div style='position: absolute; color: red; left: {}px; top: {}px; font-size: {}px'>{}</div>",
                x, y, transformed_font_size, char);
-        self.last_ctm = trm.pre_mul(&Transform2D::create_translation(width * font_size + spacing, 0.));
+        self.last_ctm = trm.pre_transform(&Transform2D::create_translation(width * font_size + spacing, 0.));
     }
     fn begin_word(&mut self) {}
     fn end_word(&mut self) {}
@@ -1745,7 +1748,7 @@ impl<'a> OutputDev for SVGOutput<'a> {
             write!(self.file, "<svg width=\"{}\" height=\"{}\" xmlns=\"http://www.w3.org/2000/svg\" version=\"{}\" viewBox='{} {} {} {}'>", width, height, ver, media_box.llx, media_box.lly, width, height);
         }
         write!(self.file, "\n");
-        type Mat = Transform2D<f64>;
+        type Mat = Transform;
 
         let mut ctm = Mat::create_scale(1., -1.).post_translate(vec2(0., media_box.ury));
         write!(self.file, "<g transform='matrix({}, {}, {}, {}, {}, {})'>\n",
@@ -1761,12 +1764,12 @@ impl<'a> OutputDev for SVGOutput<'a> {
         write!(self.file, "</g>\n");
         write!(self.file, "</svg>");
     }
-    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, spacing: f64, font_size: f64, char: &str) {
+    fn output_character(&mut self, trm: &Transform, width: f64, spacing: f64, font_size: f64, char: &str) {
     }
     fn begin_word(&mut self) {}
     fn end_word(&mut self) {}
     fn end_line(&mut self) {}
-    fn fill(&mut self, ctm: &Transform2D<f64>, _colorspace: &ColorSpace, _color: &[f64], path: &Path) {
+    fn fill(&mut self, ctm: &Transform, _colorspace: &ColorSpace, _color: &[f64], path: &Path) {
         write!(self.file, "<g transform='matrix({}, {}, {}, {}, {}, {})'>",
                ctm.m11,
                ctm.m12,
@@ -1854,7 +1857,7 @@ pub struct PlainTextOutput<W: ConvertToFmt>   {
     last_end: f64,
     last_y: f64,
     first_char: bool,
-    flip_ctm: Transform2D<f64>,
+    flip_ctm: Transform,
 }
 
 impl<W: ConvertToFmt> PlainTextOutput<W> {
@@ -1877,9 +1880,9 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
     }
     fn end_page(&mut self) {
     }
-    fn output_character(&mut self, trm: &Transform2D<f64>, width: f64, spacing: f64, font_size: f64, char: &str) {
-        let position = trm.post_mul(&self.flip_ctm);
-        let transformed_font_size_vec = trm.transform_vector(&vec2(font_size, font_size));
+    fn output_character(&mut self, trm: &Transform, width: f64, spacing: f64, font_size: f64, char: &str) {
+        let position = trm.post_transform(&self.flip_ctm);
+        let transformed_font_size_vec = trm.transform_vector(vec2(font_size, font_size));
         // get the length of one sized of the square with the same area with a rectangle of size (x, y)
         let transformed_font_size = (transformed_font_size_vec.x*transformed_font_size_vec.y).sqrt();
         let (x, y) = (position.m31, position.m32);
