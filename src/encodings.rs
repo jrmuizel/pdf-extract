@@ -772,6 +772,7 @@ pub const WIN_ANSI_ENCODING: [Option<&str>; 256] = [
   Some("thorn"),
   Some("ydieresis")];
 
+#[allow(dead_code)]
 pub const STANDARD_ENCODING: [Option<&str>; 256] = [
   None,
   None,
@@ -1031,6 +1032,7 @@ pub const STANDARD_ENCODING: [Option<&str>; 256] = [
   None
 ];
 
+#[allow(dead_code)]
 pub const EXPERT_ENCODING: [Option<&str>; 256] = [
   None,
   None,
@@ -1289,6 +1291,7 @@ pub const EXPERT_ENCODING: [Option<&str>; 256] = [
   Some("Thornsmall"),
   Some("Ydieresissmall")];
 
+#[allow(dead_code)]
 pub const SYMBOL_ENCODING: [Option<&str>; 256] = [
   None,
   None,
@@ -1547,6 +1550,7 @@ pub const SYMBOL_ENCODING: [Option<&str>; 256] = [
   Some("bracerightbt"),
   None];
 
+#[allow(dead_code)]
 pub const ZAPFDINGBATS_ENCODING: [Option<&str>; 256] = [
   None,
   None,

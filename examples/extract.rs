@@ -26,8 +26,8 @@ fn main() {
 
     print_metadata(&doc);
 
-    let mut output: Box<OutputDev> = match output_kind.as_ref() {
-        "txt" => Box::new(PlainTextOutput::new(&mut output_file as (&mut std::io::Write))),
+    let mut output: Box<dyn OutputDev> = match output_kind.as_ref() {
+        "txt" => Box::new(PlainTextOutput::new(&mut output_file as &mut dyn std::io::Write)),
         "html" => Box::new(HTMLOutput::new(&mut output_file)),
         "svg" => Box::new(SVGOutput::new(&mut output_file)),
         _ => panic!(),
