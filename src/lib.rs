@@ -1899,6 +1899,7 @@ pub struct PlainTextOutput<W: ConvertToFmt>   {
     last_y: f64,
     first_char: bool,
     flip_ctm: Transform,
+    word_delimiter: Option<String>,
 }
 
 impl<W: ConvertToFmt> PlainTextOutput<W> {
@@ -1909,7 +1910,15 @@ impl<W: ConvertToFmt> PlainTextOutput<W> {
             first_char: false,
             last_y: 0.,
             flip_ctm: Transform2D::identity(),
+            word_delimiter: None,
         }
+    }
+
+    /// Can be useful when trying to extract table like pdf text, with a bit a
+    /// luck some of the output can be interpreted as CSV.
+    pub fn word_delimiter(&mut self, delim: Option<String>) -> &mut Self {
+        self.word_delimiter = delim;
+        self
     }
 }
 
@@ -1957,7 +1966,15 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
         self.first_char = true;
         Ok(())
     }
-    fn end_word(&mut self) -> Result<(), OutputError> {Ok(())}
+
+    fn end_word(&mut self) -> Result<(), OutputError> {
+        use std::fmt::Write;
+        if let Some(s) = &self.word_delimiter {
+            write!(self.writer, "{}", s)?;
+        }
+        Ok(())
+    }
+
     fn end_line(&mut self) -> Result<(), OutputError>{
         //write!(self.file, "\n");
         Ok(())
