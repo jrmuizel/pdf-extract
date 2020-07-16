@@ -33,5 +33,5 @@ fn main() {
         _ => panic!(),
     };
 
-    output_doc(&doc, output.as_mut());
+    output_doc(&doc, output.as_mut()).unwrap();
 }
