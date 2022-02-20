@@ -849,14 +849,10 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
     fn decode_char(&self, char: CharCode) -> String {
         let slice = [char as u8];
         if let Some(ref unicode_map) = self.unicode_map {
-            let s = unicode_map.get(&char);
-            let s = match s {
-                None => {
-                    panic!("missing char {:?} in map {:?}", char, unicode_map)
-                }
-                Some(s) => s.clone(),
-            };
-            return s;
+            return unicode_map
+                .get(&char)
+                .cloned()
+                .unwrap_or_else(|| "�".to_string());
         }
         let encoding = self
             .encoding
