@@ -796,7 +796,7 @@ impl<'a> Iterator for PdfFontIter<'a> {
 }
 
 pub trait PdfFont: Debug {
-    fn get_width(&self, id: CharCode) -> f64;
+    fn get_width(&self, id: CharCode) -> Option<f64>;
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)>;
     fn decode_char(&self, char: CharCode) -> String;
 
@@ -823,17 +823,17 @@ impl<'a> dyn PdfFont + 'a {
 }
 
 impl<'a> PdfFont for PdfSimpleFont<'a> {
-    fn get_width(&self, id: CharCode) -> f64 {
+    fn get_width(&self, id: CharCode) -> Option<f64> {
         let width = self.widths.get(&id);
         if let Some(width) = width {
-            *width
+            Some(*width)
         } else {
             dlog!(
                 "missing width for {} falling back to default_width {:?}",
                 id,
                 self.font
             );
-            self.default_width.unwrap()
+            self.default_width
         }
     }
     /*fn decode(&self, chars: &[u8]) -> String {
@@ -869,12 +869,13 @@ impl<'a> fmt::Debug for PdfSimpleFont<'a> {
 }
 
 impl<'a> PdfFont for PdfType3Font<'a> {
-    fn get_width(&self, id: CharCode) -> f64 {
+    fn get_width(&self, id: CharCode) -> Option<f64> {
         let width = self.widths.get(&id);
         if let Some(width) = width {
-            *width
+            Some(*width)
         } else {
-            panic!("missing width for {} {:?}", id, self.font);
+            dbg!("missing width for {} {:?}", id, self.font);
+            None
         }
     }
     /*fn decode(&self, chars: &[u8]) -> String {
@@ -1047,14 +1048,14 @@ impl<'a> PdfCIDFont<'a> {
 }
 
 impl<'a> PdfFont for PdfCIDFont<'a> {
-    fn get_width(&self, id: CharCode) -> f64 {
+    fn get_width(&self, id: CharCode) -> Option<f64> {
         let width = self.widths.get(&id);
         if let Some(width) = width {
             dlog!("GetWidth {} -> {}", id, *width);
-            *width
+            Some(*width)
         } else {
             dlog!("missing width for {} falling back to default_width", id);
-            self.default_width.unwrap()
+            self.default_width
         }
     } /*
       fn decode(&self, chars: &[u8]) -> String {
@@ -1292,7 +1293,7 @@ fn show_text(
         // 5.9 Extraction of Text Content
 
         //dlog!("w: {}", font.widths[&(*c as i64)]);
-        let w0 = font.get_width(c) / 1000.;
+        let w0 = font.get_width(c).unwrap() / 1000.;
 
         let mut spacing = ts.character_spacing;
         // "Word spacing is applied to every occurrence of the single-byte character code 32 in a
