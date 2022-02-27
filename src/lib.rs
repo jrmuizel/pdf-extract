@@ -73,27 +73,19 @@ macro_rules! dlog {
 }
 
 fn get_info(doc: &Document) -> Option<&Dictionary> {
-    match doc.trailer.get(b"Info") {
-        Ok(&Object::Reference(ref id)) => match doc.get_object(*id) {
-            Ok(&Object::Dictionary(ref info)) => {
-                return Some(info);
-            }
-            _ => {}
-        },
-        _ => {}
+    if let Ok(&Object::Reference(ref id)) = doc.trailer.get(b"Info") {
+        if let Ok(&Object::Dictionary(ref info)) = doc.get_object(*id) {
+            return Some(info);
+        }
     }
     None
 }
 
 fn get_catalog(doc: &Document) -> &Dictionary {
-    match doc.trailer.get(b"Root").unwrap() {
-        &Object::Reference(ref id) => match doc.get_object(*id) {
-            Ok(&Object::Dictionary(ref catalog)) => {
-                return catalog;
-            }
-            _ => {}
-        },
-        _ => {}
+    if let &Object::Reference(ref id) = doc.trailer.get(b"Root").unwrap() {
+        if let Ok(&Object::Dictionary(ref catalog)) = doc.get_object(*id) {
+            return catalog;
+        }
     }
     panic!();
 }
@@ -118,7 +110,7 @@ fn get_pages(doc: &Document) -> &Dictionary {
 }
 
 #[allow(non_upper_case_globals)]
-const PDFDocEncoding: &'static [u16] = &[
+const PDFDocEncoding: &[u16] = &[
     0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008, 0x0009, 0x000a, 0x000b,
     0x000c, 0x000d, 0x000e, 0x000f, 0x0010, 0x0011, 0x0012, 0x0013, 0x0014, 0x0015, 0x0016, 0x0017,
     0x02d8, 0x02c7, 0x02c6, 0x02d9, 0x02dd, 0x02db, 0x02da, 0x02dc, 0x0020, 0x0021, 0x0022, 0x0023,
@@ -149,7 +141,7 @@ fn pdf_to_utf8(s: &[u8]) -> String {
     } else {
         let r: Vec<u8> = s
             .iter()
-            .map(|x| *x)
+            .copied()
             .flat_map(|x| {
                 let k = PDFDocEncoding[x as usize];
                 vec![(k >> 8) as u8, k as u8].into_iter()
@@ -165,7 +157,7 @@ fn to_utf8(encoding: &[u16], s: &[u8]) -> String {
     } else {
         let r: Vec<u8> = s
             .iter()
-            .map(|x| *x)
+            .copied()
             .flat_map(|x| {
                 let k = encoding[x as usize];
                 vec![(k >> 8) as u8, k as u8].into_iter()
@@ -207,7 +199,11 @@ impl<'a, T: FromObj<'a>> FromOptObj<'a> for Option<T> {
 
 impl<'a, T: FromObj<'a>> FromOptObj<'a> for T {
     fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &[u8]) -> Self {
-        T::from_obj(doc, obj.expect(&String::from_utf8_lossy(key))).expect("wrong type")
+        T::from_obj(
+            doc,
+            obj.unwrap_or_else(|| panic!("{}", String::from_utf8_lossy(key).to_string())),
+        )
+        .expect("wrong type")
     }
 }
 
@@ -263,9 +259,9 @@ impl<'a, T: FromObj<'a>> FromObj<'a> for [T; 3] {
 
 impl<'a> FromObj<'a> for f64 {
     fn from_obj(_doc: &Document, obj: &Object) -> Option<Self> {
-        match obj {
-            &Object::Integer(i) => Some(i as f64),
-            &Object::Real(f) => Some(f),
+        match *obj {
+            Object::Integer(i) => Some(i as f64),
+            Object::Real(f) => Some(f),
             _ => None,
         }
     }
@@ -320,7 +316,7 @@ fn maybe_get_name_string<'a>(
 ) -> Option<String> {
     maybe_get_obj(doc, dict, key)
         .and_then(|n| n.as_name().ok())
-        .map(|n| pdf_to_utf8(n))
+        .map(pdf_to_utf8)
 }
 
 fn maybe_get_name<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<&'a [u8]> {
@@ -368,27 +364,27 @@ fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Rc<dyn PdfFont + 'a
 }
 
 fn is_core_font(name: &str) -> bool {
-    match name {
+    matches!(
+        name,
         "Courier-Bold"
-        | "Courier-BoldOblique"
-        | "Courier-Oblique"
-        | "Courier"
-        | "Helvetica-Bold"
-        | "Helvetica-BoldOblique"
-        | "Helvetica-Oblique"
-        | "Helvetica"
-        | "Symbol"
-        | "Times-Bold"
-        | "Times-BoldItalic"
-        | "Times-Italic"
-        | "Times-Roman"
-        | "ZapfDingbats" => true,
-        _ => false,
-    }
+            | "Courier-BoldOblique"
+            | "Courier-Oblique"
+            | "Courier"
+            | "Helvetica-Bold"
+            | "Helvetica-BoldOblique"
+            | "Helvetica-Oblique"
+            | "Helvetica"
+            | "Symbol"
+            | "Times-Bold"
+            | "Times-BoldItalic"
+            | "Times-Italic"
+            | "Times-Roman"
+            | "ZapfDingbats"
+    )
 }
 
 fn encoding_to_unicode_table(name: &[u8]) -> Vec<u16> {
-    let encoding = match &name[..] {
+    let encoding = match name {
         b"MacRomanEncoding" => encodings::MAC_ROMAN_ENCODING,
         b"MacExpertEncoding" => encodings::MAC_EXPERT_ENCODING,
         b"WinAnsiEncoding" => encodings::WIN_ANSI_ENCODING,
@@ -469,7 +465,7 @@ impl<'a> PdfSimpleFont<'a> {
 
             let charset = maybe_get_obj(doc, descriptor, b"CharSet");
             let _charset = match charset {
-                Some(&Object::String(ref s, _)) => Some(pdf_to_utf8(&s)),
+                Some(&Object::String(ref s, _)) => Some(pdf_to_utf8(s)),
                 _ => None,
             };
             //dlog!("charset {:?}", charset);
@@ -498,12 +494,12 @@ impl<'a> PdfSimpleFont<'a> {
                     let mut code = 0;
                     for o in differences {
                         let o = maybe_deref(doc, o);
-                        match o {
-                            &Object::Integer(i) => {
+                        match *o {
+                            Object::Integer(i) => {
                                 code = i;
                             }
-                            &Object::Name(ref n) => {
-                                let name = pdf_to_utf8(&n);
+                            Object::Name(ref n) => {
+                                let name = pdf_to_utf8(n);
                                 // XXX: names of Type1 fonts can map to arbitrary strings instead of real
                                 // unicode names, so we should probably handle this differently
                                 let unicode = glyphnames::name_to_unicode(&name);
@@ -582,8 +578,8 @@ impl<'a> PdfSimpleFont<'a> {
                         dlog!("has encoding");
                         for w in font_metrics.2 {
                             let c = glyphnames::name_to_unicode(w.2).unwrap();
-                            for i in 0..encoding.len() {
-                                if encoding[i] == c {
+                            for (i, encoding_item) in encoding.iter().enumerate() {
+                                if *encoding_item == c {
                                     width_map.insert(i as CharCode, w.1 as f64);
                                 }
                             }
@@ -685,7 +681,7 @@ impl<'a> PdfSimpleFont<'a> {
         maybe_get_obj(self.doc, self.font, b"FontDescriptor")
             .and_then(|desc| desc.as_dict().ok())
             .map(|desc| PdfFontDescriptor {
-                desc: desc,
+                desc,
                 doc: self.doc,
             })
     }
@@ -716,12 +712,12 @@ impl<'a> PdfType3Font<'a> {
                     dlog!("Differences");
                     let mut code = 0;
                     for o in differences {
-                        match o {
-                            &Object::Integer(i) => {
+                        match *o {
+                            Object::Integer(i) => {
                                 code = i;
                             }
-                            &Object::Name(ref n) => {
-                                let name = pdf_to_utf8(&n);
+                            Object::Name(ref n) => {
+                                let name = pdf_to_utf8(n);
                                 // XXX: names of Type1 fonts can map to arbitrary strings instead of real
                                 // unicode names, so we should probably handle this differently
                                 let unicode = glyphnames::name_to_unicode(&name);
@@ -829,14 +825,14 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
     fn get_width(&self, id: CharCode) -> f64 {
         let width = self.widths.get(&id);
         if let Some(width) = width {
-            return *width;
+            *width
         } else {
             dlog!(
                 "missing width for {} falling back to default_width {:?}",
                 id,
                 self.font
             );
-            return self.default_width.unwrap();
+            self.default_width.unwrap()
         }
     }
     /*fn decode(&self, chars: &[u8]) -> String {
@@ -859,10 +855,9 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
             .encoding
             .as_ref()
             .map(|x| &x[..])
-            .unwrap_or(&PDFDocEncoding);
+            .unwrap_or(PDFDocEncoding);
         //dlog!("char_code {:?} {:?}", char, self.encoding);
-        let s = to_utf8(encoding, &slice);
-        s
+        to_utf8(encoding, &slice)
     }
 }
 
@@ -876,7 +871,7 @@ impl<'a> PdfFont for PdfType3Font<'a> {
     fn get_width(&self, id: CharCode) -> f64 {
         let width = self.widths.get(&id);
         if let Some(width) = width {
-            return *width;
+            *width
         } else {
             panic!("missing width for {} {:?}", id, self.font);
         }
@@ -905,10 +900,9 @@ impl<'a> PdfFont for PdfType3Font<'a> {
             .encoding
             .as_ref()
             .map(|x| &x[..])
-            .unwrap_or(&PDFDocEncoding);
+            .unwrap_or(PDFDocEncoding);
         //dlog!("char_code {:?} {:?}", char, self.encoding);
-        let s = to_utf8(encoding, &slice);
-        s
+        to_utf8(encoding, &slice)
     }
 }
 
@@ -951,13 +945,10 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
                     be.push(((v[i] as u16) << 8) | v[i + 1] as u16);
                     i += 2;
                 }
-                match &be[..] {
-                    [0xd800..=0xdfff] => {
-                        // this range is not specified as not being encoded
-                        // we ignore them so we don't an error from from_utt16
-                        continue;
-                    }
-                    _ => {}
+                if let [0xd800..=0xdfff] = &be[..] {
+                    // this range is not specified as not being encoded
+                    // we ignore them so we don't an error from from_utt16
+                    continue;
                 }
                 let s = String::from_utf16(&be).unwrap();
 
@@ -991,15 +982,15 @@ impl<'a> PdfCIDFont<'a> {
             maybe_get_obj(doc, font, b"Encoding").expect("Encoding required in type0 fonts");
         dlog!("base_name {} {:?}", base_name, font);
 
-        match encoding {
-            &Object::Name(ref name) => {
+        match *encoding {
+            Object::Name(ref name) => {
                 let name = pdf_to_utf8(name);
                 dlog!("encoding {:?}", name);
                 assert!(name == "Identity-H");
             }
-            &Object::Stream(ref stream) => {
+            Object::Stream(ref stream) => {
                 let contents = get_contents(stream);
-                dlog!("Stream: {}", String::from_utf8(contents.clone()).unwrap());
+                dlog!("Stream: {}", String::from_utf8(contents).unwrap());
             }
             _ => {
                 panic!("unsupported encoding {:?}", encoding)
@@ -1027,17 +1018,15 @@ impl<'a> PdfCIDFont<'a> {
             while i < w.len() {
                 if let &Object::Array(ref wa) = w[i + 1] {
                     let cid = w[i].as_i64().expect("id should be num");
-                    let mut j = 0;
                     dlog!("wa: {:?} -> {:?}", cid, wa);
-                    for w in wa {
-                        widths.insert((cid + j) as CharCode, as_num(w));
-                        j += 1;
+                    for (j, w) in wa.iter().enumerate() {
+                        widths.insert((cid + j as i64) as CharCode, as_num(w));
                     }
                     i += 2;
                 } else {
                     let c_first = w[i].as_i64().expect("first should be num");
                     let c_last = w[i].as_i64().expect("last should be num");
-                    let c_width = as_num(&w[i]);
+                    let c_width = as_num(w[i]);
                     for id in c_first..c_last {
                         widths.insert(id as CharCode, c_width);
                     }
@@ -1061,10 +1050,10 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
         let width = self.widths.get(&id);
         if let Some(width) = width {
             dlog!("GetWidth {} -> {}", id, *width);
-            return *width;
+            *width
         } else {
             dlog!("missing width for {} falling back to default_width", id);
-            return self.default_width.unwrap();
+            self.default_width.unwrap()
         }
     } /*
       fn decode(&self, chars: &[u8]) -> String {
@@ -1178,9 +1167,9 @@ enum Function {
 
 impl Function {
     fn new(doc: &Document, obj: &Object) -> Function {
-        let dict = match obj {
-            &Object::Dictionary(ref dict) => dict,
-            &Object::Stream(ref stream) => &stream.dict,
+        let dict = match *obj {
+            Object::Dictionary(ref dict) => dict,
+            Object::Stream(ref stream) => &stream.dict,
             _ => panic!(),
         };
         let function_type: i64 = get(doc, dict, b"FunctionType");
@@ -1234,9 +1223,9 @@ impl Function {
 }
 
 fn as_num(o: &Object) -> f64 {
-    match o {
-        &Object::Integer(i) => i as f64,
-        &Object::Real(f) => f,
+    match *o {
+        Object::Integer(i) => i as f64,
+        Object::Real(f) => f,
         _ => {
             panic!("not a number")
         }
@@ -1395,10 +1384,10 @@ impl Path {
         Path { ops: Vec::new() }
     }
     fn current_point(&self) -> (f64, f64) {
-        match self.ops.last().unwrap() {
-            &PathOp::MoveTo(x, y) => (x, y),
-            &PathOp::LineTo(x, y) => (x, y),
-            &PathOp::CurveTo(_, _, _, _, x, y) => (x, y),
+        match *self.ops.last().unwrap() {
+            PathOp::MoveTo(x, y) => (x, y),
+            PathOp::LineTo(x, y) => (x, y),
+            PathOp::CurveTo(_, _, _, _, x, y) => (x, y),
             _ => {
                 panic!()
             }
@@ -1459,9 +1448,9 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
         b"DeviceCMYK" => ColorSpace::DeviceCMYK,
         b"Pattern" => ColorSpace::Pattern,
         _ => {
-            let colorspaces: &Dictionary = get(&doc, resources, b"ColorSpace");
-            let cs = maybe_get_array(doc, colorspaces, &name[..])
-                .unwrap_or_else(|| panic!("missing colorspace {:?}", &name[..]));
+            let colorspaces: &Dictionary = get(doc, resources, b"ColorSpace");
+            let cs = maybe_get_array(doc, colorspaces, name)
+                .unwrap_or_else(|| panic!("missing colorspace {:?}", name));
             let cs_name = pdf_to_utf8(cs[0].as_name().expect("first arg must be a name"));
             match cs_name.as_ref() {
                 "Separation" => {
@@ -1486,26 +1475,26 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                 "CalGray" => {
                     let dict = cs[1].as_dict().expect("second arg must be a dict");
                     ColorSpace::CalGray(CalGray {
-                        white_point: get(&doc, dict, b"WhitePoint"),
-                        black_point: get(&doc, dict, b"BackPoint"),
-                        gamma: get(&doc, dict, b"Gamma"),
+                        white_point: get(doc, dict, b"WhitePoint"),
+                        black_point: get(doc, dict, b"BackPoint"),
+                        gamma: get(doc, dict, b"Gamma"),
                     })
                 }
                 "CalRGB" => {
                     let dict = cs[1].as_dict().expect("second arg must be a dict");
                     ColorSpace::CalRGB(CalRGB {
-                        white_point: get(&doc, dict, b"WhitePoint"),
-                        black_point: get(&doc, dict, b"BackPoint"),
-                        gamma: get(&doc, dict, b"Gamma"),
-                        matrix: get(&doc, dict, b"Matrix"),
+                        white_point: get(doc, dict, b"WhitePoint"),
+                        black_point: get(doc, dict, b"BackPoint"),
+                        gamma: get(doc, dict, b"Gamma"),
+                        matrix: get(doc, dict, b"Matrix"),
                     })
                 }
                 "Lab" => {
                     let dict = cs[1].as_dict().expect("second arg must be a dict");
                     ColorSpace::Lab(Lab {
-                        white_point: get(&doc, dict, b"WhitePoint"),
-                        black_point: get(&doc, dict, b"BackPoint"),
-                        range: get(&doc, dict, b"Range"),
+                        white_point: get(doc, dict, b"WhitePoint"),
+                        black_point: get(doc, dict, b"BackPoint"),
+                        range: get(doc, dict, b"Range"),
                     })
                 }
                 "Pattern" => ColorSpace::Pattern,
@@ -1543,7 +1532,7 @@ impl<'a> Processor<'a> {
                 font_size: std::f64::NAN,
                 character_spacing: 0.,
                 word_spacing: 0.,
-                horizontal_scaling: 100. / 100.,
+                horizontal_scaling: 1.0,
                 leading: 0.,
                 rise: 0.,
                 tm: Transform2D::identity(),
@@ -1603,7 +1592,7 @@ impl<'a> Processor<'a> {
                             dlog!("unhandled pattern color");
                             Vec::new()
                         }
-                        _ => operation.operands.iter().map(|x| as_num(x)).collect(),
+                        _ => operation.operands.iter().map(as_num).collect(),
                     };
                 }
                 "sc" | "scn" => {
@@ -1612,20 +1601,20 @@ impl<'a> Processor<'a> {
                             dlog!("unhandled pattern color");
                             Vec::new()
                         }
-                        _ => operation.operands.iter().map(|x| as_num(x)).collect(),
+                        _ => operation.operands.iter().map(as_num).collect(),
                     };
                 }
                 "G" | "g" | "RG" | "rg" | "K" | "k" => {
                     dlog!("unhandled color operation {:?}", operation);
                 }
-                "TJ" => match operation.operands[0] {
-                    Object::Array(ref array) => {
+                "TJ" => {
+                    if let Object::Array(ref array) = operation.operands[0] {
                         for e in array {
-                            match e {
-                                &Object::String(ref s, _) => {
+                            match *e {
+                                Object::String(ref s, _) => {
                                     show_text(&mut gs, s, &tlm, &flip_ctm, output)?;
                                 }
-                                &Object::Integer(i) => {
+                                Object::Integer(i) => {
                                     let ts = &mut gs.ts;
                                     let w0 = 0.;
                                     let tj = i as f64;
@@ -1637,7 +1626,7 @@ impl<'a> Processor<'a> {
                                         .pre_transform(&Transform2D::create_translation(tx, ty));
                                     dlog!("adjust text by: {} {:?}", i, ts.tm);
                                 }
-                                &Object::Real(i) => {
+                                Object::Real(i) => {
                                     let ts = &mut gs.ts;
                                     let w0 = 0.;
                                     let tj = i as f64;
@@ -1655,8 +1644,7 @@ impl<'a> Processor<'a> {
                             }
                         }
                     }
-                    _ => {}
-                },
+                }
                 "Tj" => match operation.operands[0] {
                     Object::String(ref s, _) => {
                         show_text(&mut gs, s, &tlm, &flip_ctm, output)?;
@@ -1678,7 +1666,7 @@ impl<'a> Processor<'a> {
                     gs.ts.leading = as_num(&operation.operands[0]);
                 }
                 "Tf" => {
-                    let fonts: &Dictionary = get(&doc, resources, b"Font");
+                    let fonts: &Dictionary = get(doc, resources, b"Font");
                     let name = operation.operands[0].as_name().unwrap();
                     let font = font_table
                         .entry(name.to_owned())
@@ -1859,14 +1847,14 @@ impl<'a> Processor<'a> {
                 "Do" => {
                     // `Do` process an entire subdocument, so we do a recursive call to `process_stream`
                     // with the subdocument content and resources
-                    let xobject: &Dictionary = get(&doc, resources, b"XObject");
+                    let xobject: &Dictionary = get(doc, resources, b"XObject");
                     let name = operation.operands[0].as_name().unwrap();
-                    let xf: &Stream = get(&doc, xobject, name);
-                    let resources = maybe_get_obj(&doc, &xf.dict, b"Resources")
+                    let xf: &Stream = get(doc, xobject, name);
+                    let resources = maybe_get_obj(doc, &xf.dict, b"Resources")
                         .and_then(|n| n.as_dict().ok())
                         .unwrap_or(resources);
                     let contents = get_contents(xf);
-                    self.process_stream(&doc, contents, resources, &media_box, output, page_num)?;
+                    self.process_stream(doc, contents, resources, media_box, output, page_num)?;
                 }
                 _ => {
                     dlog!("unknown operation {:?}", operation);
@@ -1957,7 +1945,7 @@ impl<'a> HTMLOutput<'a> {
         }
     }
     fn flush_string(&mut self) -> Result<(), OutputError> {
-        if self.buf.len() != 0 {
+        if !self.buf.is_empty() {
             let position = self.buf_ctm.post_transform(&self.flip_ctm);
             let transformed_font_size_vec = self
                 .buf_ctm
@@ -1968,8 +1956,14 @@ impl<'a> HTMLOutput<'a> {
             let (x, y) = (position.m31, position.m32);
             info!("flush {} {:?}", self.buf, (x, y));
 
-            write!(self.file, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>\n",
-                   x, y, transformed_font_size, insert_nbsp(&self.buf))?;
+            writeln!(
+                self.file,
+                "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>",
+                x,
+                y,
+                transformed_font_size,
+                insert_nbsp(&self.buf)
+            )?;
         }
         Ok(())
     }
@@ -2064,7 +2058,7 @@ impl<'a> OutputDev for SVGOutput<'a> {
         art_box: Option<(f64, f64, f64, f64)>,
     ) -> Result<(), OutputError> {
         let ver = 1.1;
-        write!(self.file, "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n")?;
+        writeln!(self.file, "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>")?;
         if ver == 1.1 {
             write!(
                 self.file,
@@ -2086,19 +2080,19 @@ impl<'a> OutputDev for SVGOutput<'a> {
             let height = media_box.ury - media_box.lly;
             write!(self.file, "<svg width=\"{}\" height=\"{}\" xmlns=\"http://www.w3.org/2000/svg\" version=\"{}\" viewBox='{} {} {} {}'>", width, height, ver, media_box.llx, media_box.lly, width, height)?;
         }
-        write!(self.file, "\n")?;
+        writeln!(self.file)?;
         type Mat = Transform;
 
         let ctm = Mat::create_scale(1., -1.).post_translate(vec2(0., media_box.ury));
-        write!(
+        writeln!(
             self.file,
-            "<g transform='matrix({}, {}, {}, {}, {}, {})'>\n",
+            "<g transform='matrix({}, {}, {}, {}, {}, {})'>",
             ctm.m11, ctm.m12, ctm.m21, ctm.m22, ctm.m31, ctm.m32,
         )?;
         Ok(())
     }
     fn end_page(&mut self) -> Result<(), OutputError> {
-        write!(self.file, "</g>\n")?;
+        writeln!(self.file, "</g>")?;
         write!(self.file, "</svg>")?;
         Ok(())
     }
@@ -2143,25 +2137,25 @@ impl<'a> OutputDev for SVGOutput<'a> {
         }*/
         let mut d = Vec::new();
         for op in &path.ops {
-            match op {
-                &PathOp::MoveTo(x, y) => d.push(format!("M{} {}", x, y)),
-                &PathOp::LineTo(x, y) => d.push(format!("L{} {}", x, y)),
-                &PathOp::CurveTo(x1, y1, x2, y2, x, y) => {
+            match *op {
+                PathOp::MoveTo(x, y) => d.push(format!("M{} {}", x, y)),
+                PathOp::LineTo(x, y) => d.push(format!("L{} {}", x, y)),
+                PathOp::CurveTo(x1, y1, x2, y2, x, y) => {
                     d.push(format!("C{} {} {} {} {} {}", x1, y1, x2, y2, x, y))
                 }
-                &PathOp::Close => d.push(format!("Z")),
-                &PathOp::Rect(x, y, width, height) => {
+                PathOp::Close => d.push("Z".to_string()),
+                PathOp::Rect(x, y, width, height) => {
                     d.push(format!("M{} {}", x, y));
                     d.push(format!("L{} {}", x + width, y));
                     d.push(format!("L{} {}", x + width, y + height));
                     d.push(format!("L{} {}", x, y + height));
-                    d.push(format!("Z"));
+                    d.push("Z".to_string());
                 }
             }
         }
         write!(self.file, "<path d='{}' />", d.join(" "))?;
         write!(self.file, "</g>")?;
-        write!(self.file, "\n")?;
+        writeln!(self.file)?;
         Ok(())
     }
 }
@@ -2261,12 +2255,12 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
         //dlog!("last_end: {} x: {}, width: {}", self.last_end, x, width);
         if self.first_char {
             if (y - self.last_y).abs() > transformed_font_size * 1.5 {
-                write!(self.writer, "\n")?;
+                writeln!(self.writer)?;
             }
 
             // we've moved to the left and down
             if x < self.last_end && (y - self.last_y).abs() > transformed_font_size * 0.5 {
-                write!(self.writer, "\n")?;
+                writeln!(self.writer)?;
             }
 
             if x > self.last_end + transformed_font_size * 0.1 {
@@ -2301,24 +2295,18 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
 
 pub fn print_metadata(doc: &Document) {
     dlog!("Version: {}", doc.version);
-    if let Some(ref info) = get_info(&doc) {
-        for (k, v) in *info {
-            match v {
-                &Object::String(ref s, StringFormat::Literal) => {
-                    dlog!("{}: {}", pdf_to_utf8(k), pdf_to_utf8(s));
-                }
-                _ => {}
+    if let Some(info) = get_info(doc) {
+        for (k, v) in info {
+            if let &Object::String(ref s, StringFormat::Literal) = v {
+                dlog!("{}: {}", pdf_to_utf8(k), pdf_to_utf8(s));
             }
         }
     }
-    dlog!(
-        "Page count: {}",
-        get::<i64>(&doc, &get_pages(&doc), b"Count")
-    );
-    dlog!("Pages: {:?}", get_pages(&doc));
+    dlog!("Page count: {}", get::<i64>(doc, get_pages(doc), b"Count"));
+    dlog!("Pages: {:?}", get_pages(doc));
     dlog!(
         "Type: {:?}",
-        get_pages(&doc)
+        get_pages(doc)
             .get(b"Type")
             .and_then(|x| x.as_name())
             .unwrap()
@@ -2335,7 +2323,7 @@ pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(
         let doc = Document::load(path)?;
         output_doc(&doc, &mut output)?;
     }
-    return Ok(s);
+    Ok(s)
 }
 
 fn get_inherited<'a, T: FromObj<'a>>(
@@ -2379,12 +2367,12 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), Outp
         };
 
         let art_box =
-            get::<Option<Vec<f64>>>(&doc, page_dict, b"ArtBox").map(|x| (x[0], x[1], x[2], x[3]));
+            get::<Option<Vec<f64>>>(doc, page_dict, b"ArtBox").map(|x| (x[0], x[1], x[2], x[3]));
 
         output.begin_page(page_num, &media_box, art_box)?;
 
         p.process_stream(
-            &doc,
+            doc,
             doc.get_page_content(dict.1).unwrap(),
             resources,
             &media_box,
