@@ -3,6 +3,7 @@ extern crate lopdf;
 use euclid::*;
 use log::{info, warn};
 use lopdf::content::Content;
+pub use lopdf::Document;
 use lopdf::*;
 use std::fmt::{Debug, Formatter};
 extern crate adobe_cmap_parser;
