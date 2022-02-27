@@ -348,6 +348,7 @@ struct PdfSimpleFont<'a> {
 #[derive(Clone)]
 struct PdfType3Font<'a> {
     font: &'a Dictionary,
+    #[allow(dead_code)]
     doc: &'a Document,
     encoding: Option<Vec<u16>>,
     unicode_map: Option<HashMap<u32, String>>,
@@ -1125,6 +1126,7 @@ impl<'a> fmt::Debug for PdfFontDescriptor<'a> {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct Type0Func {
     domain: Vec<f64>,
@@ -1156,6 +1158,7 @@ impl Type0Func {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct Type2Func {
     c0: Option<Vec<f64>>,
@@ -1403,6 +1406,7 @@ impl Path {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct CalGray {
     white_point: [f64; 3],
@@ -1410,6 +1414,7 @@ pub struct CalGray {
     gamma: Option<f64>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct CalRGB {
     white_point: [f64; 3],
@@ -1418,6 +1423,7 @@ pub struct CalRGB {
     matrix: Option<Vec<f64>>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct Lab {
     white_point: [f64; 3],
@@ -1425,6 +1431,7 @@ pub struct Lab {
     range: Option<[f64; 4]>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct Separation {
     name: String,
