@@ -1,12 +1,12 @@
 [package]
 authors = ["Jeff Muizelaar <jmuizelaar@mozilla.com>"]
-name = "pdf-extract"
+name = "pdf-extract-fhl"
 version = "0.6.5-alpha.0"
 license = "MIT"
 documentation = "https://docs.rs/crate/pdf-extract/"
-description = "A library to extract content from pdfs"
+description = "A library to extract content from pdfs (patched version for hun-law)"
 keywords = ["pdf2text", "text", "pdf", "pdf2txt"]
-repository = "https://github.com/jrmuizel/pdf-extract"
+repository = "https://github.com/badicsalex/pdf-extract"
 edition = "2018"
 
 [profile.release]
@@ -16,6 +16,7 @@ debug = true
 adobe-cmap-parser = "0.3.3"
 encoding = "0.2.33"
 euclid = "0.20.5"
+log = "0.4.14"
 lopdf = { version = "0.26", default-features = false, features = [ "pom_parser" ] }
 linked-hash-map = "=0.5.3"
 postscript = "0.14"
