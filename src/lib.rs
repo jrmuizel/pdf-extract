@@ -795,7 +795,7 @@ impl<'a> Iterator for PdfFontIter<'a> {
     }
 }
 
-trait PdfFont: Debug {
+pub trait PdfFont: Debug {
     fn get_width(&self, id: CharCode) -> f64;
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)>;
     fn decode_char(&self, char: CharCode) -> String;
@@ -1281,7 +1281,7 @@ fn show_text(
     dlog!("{:?}", font.decode(s));
     dlog!("{:?}", font.decode(s).as_bytes());
     dlog!("{:?}", s);
-    output.begin_word()?;
+    output.begin_word(font.as_ref())?;
 
     for (c, length) in font.char_codes(s) {
         let tsm = Transform2D::row_major(ts.horizontal_scaling, 0., 0., 1.0, 0., ts.rise);
@@ -1882,7 +1882,7 @@ pub trait OutputDev {
         font_size: f64,
         char: &str,
     ) -> Result<(), OutputError>;
-    fn begin_word(&mut self) -> Result<(), OutputError>;
+    fn begin_word(&mut self, font: &dyn PdfFont) -> Result<(), OutputError>;
     fn end_word(&mut self) -> Result<(), OutputError>;
     fn end_line(&mut self) -> Result<(), OutputError>;
     fn stroke(
@@ -2031,7 +2031,7 @@ impl<'a> OutputDev for HTMLOutput<'a> {
 
         Ok(())
     }
-    fn begin_word(&mut self) -> Result<(), OutputError> {
+    fn begin_word(&mut self, _font: &dyn PdfFont) -> Result<(), OutputError> {
         Ok(())
     }
     fn end_word(&mut self) -> Result<(), OutputError> {
@@ -2107,7 +2107,7 @@ impl<'a> OutputDev for SVGOutput<'a> {
     ) -> Result<(), OutputError> {
         Ok(())
     }
-    fn begin_word(&mut self) -> Result<(), OutputError> {
+    fn begin_word(&mut self, _font: &dyn PdfFont) -> Result<(), OutputError> {
         Ok(())
     }
     fn end_word(&mut self) -> Result<(), OutputError> {
@@ -2281,7 +2281,7 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
         self.last_end = x + width * transformed_font_size;
         Ok(())
     }
-    fn begin_word(&mut self) -> Result<(), OutputError> {
+    fn begin_word(&mut self, _font: &dyn PdfFont) -> Result<(), OutputError> {
         self.first_char = true;
         Ok(())
     }
