@@ -7,7 +7,7 @@ documentation = "https://docs.rs/crate/pdf-extract/"
 description = "A library to extract content from pdfs (patched version for hun-law)"
 keywords = ["pdf2text", "text", "pdf", "pdf2txt"]
 repository = "https://github.com/badicsalex/pdf-extract"
-edition = "2018"
+edition = "2021"
 
 [profile.release]
 debug = true
