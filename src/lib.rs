@@ -658,10 +658,6 @@ impl<'a> PdfSimpleFont<'a> {
         get_name_string(self.doc, self.font, b"Type")
     }
     #[allow(dead_code)]
-    fn get_basefont(&self) -> String {
-        get_name_string(self.doc, self.font, b"BaseFont")
-    }
-    #[allow(dead_code)]
     fn get_subtype(&self) -> String {
         get_name_string(self.doc, self.font, b"Subtype")
     }
@@ -796,6 +792,7 @@ impl<'a> Iterator for PdfFontIter<'a> {
 }
 
 pub trait PdfFont: Debug {
+    fn get_basefont(&self) -> String;
     fn get_width(&self, id: CharCode) -> Option<f64>;
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)>;
     fn decode_char(&self, char: CharCode) -> String;
@@ -823,6 +820,10 @@ impl<'a> dyn PdfFont + 'a {
 }
 
 impl<'a> PdfFont for PdfSimpleFont<'a> {
+    fn get_basefont(&self) -> String {
+        get_name_string(self.doc, self.font, b"BaseFont")
+    }
+
     fn get_width(&self, id: CharCode) -> Option<f64> {
         let width = self.widths.get(&id);
         if let Some(width) = width {
@@ -869,6 +870,10 @@ impl<'a> fmt::Debug for PdfSimpleFont<'a> {
 }
 
 impl<'a> PdfFont for PdfType3Font<'a> {
+    fn get_basefont(&self) -> String {
+        get_name_string(self.doc, self.font, b"BaseFont")
+    }
+
     fn get_width(&self, id: CharCode) -> Option<f64> {
         let width = self.widths.get(&id);
         if let Some(width) = width {
@@ -1048,6 +1053,9 @@ impl<'a> PdfCIDFont<'a> {
 }
 
 impl<'a> PdfFont for PdfCIDFont<'a> {
+    fn get_basefont(&self) -> String {
+        get_name_string(self.doc, self.font, b"BaseFont")
+    }
     fn get_width(&self, id: CharCode) -> Option<f64> {
         let width = self.widths.get(&id);
         if let Some(width) = width {
