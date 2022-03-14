@@ -1,7 +1,7 @@
 extern crate lopdf;
 
 use euclid::*;
-use log::{info, warn};
+use log::info;
 use lopdf::content::Content;
 pub use lopdf::Document;
 use lopdf::*;
@@ -515,7 +515,7 @@ impl<'a> PdfSimpleFont<'a> {
                                             }
                                             Entry::Occupied(e) => {
                                                 if e.get() != &String::from_utf16(&be).unwrap() {
-                                                    warn!("Unicode mismatch");
+                                                    dlog!("Unicode mismatch");
                                                 }
                                             }
                                         }
