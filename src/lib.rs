@@ -630,7 +630,7 @@ impl<'a> PdfType3Font<'a> {
                                 }
                                 dlog!("{} = {} ({:?})", code, name, unicode);
                                 if let Some(ref unicode_map) = unicode_map {
-                                    dlog!("{} {}", code, unicode_map.get(&(code as u32)));
+                                    dlog!("{} {:?}", code, unicode_map.get(&(code as u32)));
                                 }
                                 code += 1;
                             }
@@ -1491,7 +1491,7 @@ impl<'a> Processor<'a> {
                     gs.ts.font = Some(font);
 
                     gs.ts.font_size = as_num(&operation.operands[1]);
-                    dlog!("font {} size: {} {:?}", name, gs.ts.font_size, operation);
+                    dlog!("font {} size: {} {:?}", pdf_to_utf8(name), gs.ts.font_size, operation);
                 }
                 "Ts" => {
                     gs.ts.rise = as_num(&operation.operands[0]);
@@ -1974,7 +1974,7 @@ pub fn print_metadata(doc: &Document) {
     if let Some(ref info) = get_info(&doc) {
         for (k, v) in *info {
             match v {
-                &Object::String(ref s, StringFormat::Literal) => { dlog!("{}: {}", k, pdf_to_utf8(s)); }
+                &Object::String(ref s, StringFormat::Literal) => { dlog!("{}: {}", pdf_to_utf8(k), pdf_to_utf8(s)); }
                 _ => {}
             }
         }
