@@ -1150,12 +1150,14 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
         //dlog!("w: {}", font.widths[&(*c as i64)]);
         let w0 = font.get_width(c) / 1000.;
 
+        let mut spacing = ts.character_spacing;
         // "Word spacing is applied to every occurrence of the single-byte character code 32 in a
         //  string when using a simple font or a composite font that defines code 32 as a
         //  single-byte code. It does not apply to occurrences of the byte value 32 in
         //  multiple-byte codes."
         let is_space = c == 32 && length == 1;
-        let spacing = if is_space { ts.word_spacing } else { ts.character_spacing };
+        if is_space { spacing += ts.word_spacing }
+
         output.output_character(&trm, w0, spacing, ts.font_size, &font.decode_char(c))?;
         let tj = 0.;
         let ty = 0.;
