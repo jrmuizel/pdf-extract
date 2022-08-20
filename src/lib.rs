@@ -1465,8 +1465,10 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
             match cs_name.as_ref() {
                 "Separation" => {
                     let name = pdf_to_utf8(cs[1].as_name().expect("second arg must be a name"));
+                    // XXX: Second arg is either a name, or another color space
+                    //      The latter is not handled currently.
                     let alternate_space =
-                        pdf_to_utf8(cs[2].as_name().expect("second arg must be a name"));
+                        pdf_to_utf8(cs[2].as_name().unwrap_or(b"Unhandled Separation"));
                     let tint_transform = Box::new(Function::new(doc, maybe_deref(doc, &cs[3])));
 
                     dlog!("{:?} {:?} {:?}", name, alternate_space, tint_transform);
