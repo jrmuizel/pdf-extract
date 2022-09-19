@@ -1598,7 +1598,7 @@ impl<'a> Processor<'a> {
                     gs.fill_colorspace = make_colorspace(doc, name, resources);
                 }
                 "SC" | "SCN" => {
-                    gs.stroke_color = match gs.fill_colorspace {
+                    gs.stroke_color = match gs.stroke_colorspace {
                         ColorSpace::Pattern => {
                             dlog!("unhandled pattern color");
                             Vec::new()
