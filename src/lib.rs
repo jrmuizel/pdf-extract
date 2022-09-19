@@ -777,7 +777,7 @@ impl<'a> PdfType3Font<'a> {
     }
 }
 
-type CharCode = u32;
+pub type CharCode = u32;
 
 struct PdfFontIter<'a> {
     i: Iter<'a, u8>,
@@ -1312,7 +1312,7 @@ fn show_text(
         if is_space {
             spacing += ts.word_spacing
         }
-        output.output_character(&trm, w0, spacing, ts.font_size, &font.decode_char(c))?;
+        output.output_character(&trm, w0, spacing, ts.font_size, c, &font.decode_char(c))?;
         let tj = 0.;
         let ty = 0.;
         let tx = ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size + spacing);
@@ -1890,6 +1890,7 @@ pub trait OutputDev {
         width: f64,
         spacing: f64,
         font_size: f64,
+        cid: CharCode,
         char: &str,
     ) -> Result<(), OutputError>;
     fn begin_word(&mut self, font: &dyn PdfFont) -> Result<(), OutputError>;
@@ -2008,6 +2009,7 @@ impl<'a> OutputDev for HTMLOutput<'a> {
         width: f64,
         spacing: f64,
         font_size: f64,
+        _cid: CharCode,
         char: &str,
     ) -> Result<(), OutputError> {
         if trm.approx_eq(&self.last_ctm) {
@@ -2113,6 +2115,7 @@ impl<'a> OutputDev for SVGOutput<'a> {
         _width: f64,
         _spacing: f64,
         _font_size: f64,
+        _cid: CharCode,
         _char: &str,
     ) -> Result<(), OutputError> {
         Ok(())
@@ -2254,6 +2257,7 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
         width: f64,
         _spacing: f64,
         font_size: f64,
+        _cid: CharCode,
         char: &str,
     ) -> Result<(), OutputError> {
         let position = trm.post_transform(&self.flip_ctm);
