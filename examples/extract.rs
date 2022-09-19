@@ -1,8 +1,7 @@
 extern crate lopdf;
-extern crate pdf_extract;
 
 use lopdf::*;
-use pdf_extract::*;
+use pdf_extract_fhl::*;
 use std::env;
 use std::fs::File;
 use std::io::BufWriter;
