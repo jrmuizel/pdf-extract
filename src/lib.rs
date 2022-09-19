@@ -1449,6 +1449,7 @@ pub enum ColorSpace {
     Lab(Lab),
     Separation(Separation),
     ICCBased(Vec<u8>),
+    Other,
 }
 
 fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary) -> ColorSpace {
@@ -1510,9 +1511,7 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                     })
                 }
                 "Pattern" => ColorSpace::Pattern,
-                _ => {
-                    panic!("color_space {:?} {:?} {:?}", name, cs_name, cs)
-                }
+                _ => ColorSpace::Other,
             }
         }
     }
