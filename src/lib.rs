@@ -1352,11 +1352,11 @@ fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
                     if name == b"None" {
                         gs.smask = None;
                     } else {
-                        panic!("unexpected smask name")
+                        dlog!("unexpected smask name")
                     }
                 }
                 _ => {
-                    panic!("unexpected smask type {:?}", v)
+                    dlog!("unexpected smask type {:?}", v)
                 }
             },
             b"Type" => match v {
