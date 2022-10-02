@@ -1997,6 +1997,16 @@ pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<
     return Ok(s);
 }
 
+pub fn extract_text_from_mem(buffer: &[u8]) -> Result<String, OutputError> {
+    let mut s = String::new();
+    {
+        let mut output = PlainTextOutput::new(&mut s);
+        let doc = Document::load_mem(buffer)?;
+        output_doc(&doc, &mut output)?;
+    }
+    return Ok(s);
+}
+
 fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<T> {
     let o: Option<T> = get(doc, dict, key);
     if let Some(o) = o {
