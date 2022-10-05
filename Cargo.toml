@@ -1,12 +1,12 @@
 [package]
 authors = ["Jeff Muizelaar <jmuizelaar@mozilla.com>"]
 name = "pdf-extract"
-version = "0.6.5-alpha.1"
+version = "0.6.5-alpha.3"
 license = "MIT"
 documentation = "https://docs.rs/crate/pdf-extract/"
-description = "A library to extract content from pdfs (patched version for hun-law)"
+description = "A library to extract content from pdfs (patched version for hun-law) (patched again for field)"
 keywords = ["pdf2text", "text", "pdf", "pdf2txt"]
-repository = "https://github.com/badicsalex/pdf-extract"
+repository = "https://github.com/qpixel/pdf-extract"
 edition = "2021"
 
 [profile.release]
@@ -18,7 +18,7 @@ encoding = "0.2.33"
 euclid = "0.20.5"
 linked-hash-map = "=0.5.3"
 log = "0.4.14"
-lopdf = { version = "0.27", default-features = false, features = [ "nom_parser" ] }
+lopdf = { git = "https://github.com/J-F-Liu/lopdf.git", default-features = false, features = [ "nom_parser" ] }
 phf = { version = "0.10", features = ["macros"] }
 postscript = "0.14"
 type1-encoding-parser = "0.1.0"
