@@ -1,7 +1,5 @@
-extern crate lopdf;
-
 use lopdf::content::Content;
-use lopdf::*;
+pub use lopdf::*;
 use euclid::*;
 use std::fmt::{Debug, Formatter};
 extern crate encoding;
