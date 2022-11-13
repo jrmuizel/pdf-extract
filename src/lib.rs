@@ -451,7 +451,7 @@ impl<'a> PdfSimpleFont<'a> {
                                             Entry::Vacant(v) => { v.insert(String::from_utf16(&be).unwrap()); }
                                             Entry::Occupied(e) => {
                                                 if e.get() != &String::from_utf16(&be).unwrap() {
-                                                    println!("Unicode mismatch");
+                                                    dlog!("Unicode mismatch");
                                                 }
                                             }
                                         }
@@ -1557,7 +1557,7 @@ impl<'a> Processor<'a> {
                     if let Some(s) = s {
                         gs = s;
                     } else {
-                        println!("No state to pop");
+                        dlog!("No state to pop");
                     }
                 }
                 "gs" => {
@@ -1707,7 +1707,7 @@ impl<'a> HTMLOutput<'a> {
             // get the length of one sized of the square with the same area with a rectangle of size (x, y)
             let transformed_font_size = (transformed_font_size_vec.x * transformed_font_size_vec.y).sqrt();
             let (x, y) = (position.m31, position.m32);
-            println!("flush {} {:?}", self.buf, (x,y));
+            dlog!("flush {} {:?}", self.buf, (x,y));
 
             write!(self.file, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>\n",
                    x, y, transformed_font_size, insert_nbsp(&self.buf))?;
@@ -1738,10 +1738,10 @@ impl<'a> OutputDev for HTMLOutput<'a> {
             let position = trm.post_transform(&self.flip_ctm);
             let (x, y) = (position.m31, position.m32);
 
-            println!("accum {} {:?}", char, (x,y));
+            dlog!("accum {} {:?}", char, (x,y));
             self.buf += char;
         } else {
-            println!("flush {} {:?} {:?} {} {} {}", char, trm, self.last_ctm, width, font_size, spacing);
+            dlog!("flush {} {:?} {:?} {} {} {}", char, trm, self.last_ctm, width, font_size, spacing);
             self.flush_string()?;
             self.buf = char.to_owned();
             self.buf_font_size = font_size;
