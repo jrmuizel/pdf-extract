@@ -2303,7 +2303,8 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
         Ok(())
     }
     fn end_line(&mut self) -> Result<(), OutputError> {
-        //write!(self.file, "\n");
+        use std::fmt::Write;
+        writeln!(self.writer)?;
         Ok(())
     }
 }
