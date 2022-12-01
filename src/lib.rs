@@ -6,6 +6,7 @@ use lopdf::content::Content;
 pub use lopdf::Document;
 use lopdf::*;
 use std::fmt::{Debug, Formatter};
+use std::io::Read;
 extern crate adobe_cmap_parser;
 extern crate encoding;
 extern crate euclid;
@@ -2337,6 +2338,31 @@ pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(
     {
         let mut output = PlainTextOutput::new(&mut s);
         let doc = Document::load(path)?;
+        output_doc(&doc, &mut output)?;
+    }
+    Ok(s)
+}
+
+/// Extract the text from a pdf at `path` and return a `String` with the results
+pub fn extract_text_from<P: Read>(
+    path: P,
+) -> Result<String, OutputError> {
+    let mut s = String::new();
+    {
+        let mut output = PlainTextOutput::new(&mut s);
+        let doc = Document::load_from(path)?;
+        output_doc(&doc, &mut output)?;
+    }
+    Ok(s)
+}
+
+pub fn extract_text_mem(
+    buffer: &[u8],
+) -> Result<String, OutputError> {
+    let mut s = String::new();
+    {
+        let mut output = PlainTextOutput::new(&mut s);
+        let doc = Document::load_mem(buffer)?;
         output_doc(&doc, &mut output)?;
     }
     Ok(s)
