@@ -262,7 +262,7 @@ impl<'a> FromObj<'a> for f64 {
     fn from_obj(_doc: &Document, obj: &Object) -> Option<Self> {
         match *obj {
             Object::Integer(i) => Some(i as f64),
-            Object::Real(f) => Some(f),
+            Object::Real(f) => Some(f.into()),
             _ => None,
         }
     }
@@ -1183,7 +1183,8 @@ impl Function {
             _ => panic!(),
         };
         let function_type: i64 = get(doc, dict, b"FunctionType");
-        let f = match function_type {
+
+        match function_type {
             0 => {
                 let stream = match obj {
                     &Object::Stream(ref stream) => stream,
@@ -1227,15 +1228,14 @@ impl Function {
             _ => {
                 panic!("unhandled function type {}", function_type)
             }
-        };
-        f
+        }
     }
 }
 
 fn as_num(o: &Object) -> f64 {
     match *o {
         Object::Integer(i) => i as f64,
-        Object::Real(f) => f,
+        Object::Real(f) => f.into(),
         _ => {
             panic!("not a number")
         }
