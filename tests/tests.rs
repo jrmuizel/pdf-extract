@@ -1,9 +1,16 @@
-use pdf_extract::extract_text_from_mem;
+use pdf_extract::{extract_text, extract_text_from_mem};
 
 #[test]
-fn extract_text() {
+fn extract_mem() {
     let bytes = std::fs::read("tests/docs/atomic.pdf").unwrap();
     let out = extract_text_from_mem(&bytes).unwrap();
+    assert!(out.contains("Atomic Data"), "Text not correctly extracted");
+}
+
+#[test]
+fn extract_from_path() {
+    let path = "tests/docs/atomic.pdf";
+    let out = extract_text(path).unwrap();
     assert!(out.contains("Atomic Data"), "Text not correctly extracted");
 }
 

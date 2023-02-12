@@ -1,13 +1,13 @@
 [package]
-authors = ["Jeff Muizelaar <jmuizelaar@mozilla.com>"]
-name = "pdf-extract"
-version = "0.6.5-alpha.0"
-license = "MIT"
-documentation = "https://docs.rs/crate/pdf-extract/"
+authors = ["Jeff Muizelaar <jmuizelaar@mozilla.com>", "Joep Meindertsma <joep@ontola.io>"]
 description = "A library to extract content from pdfs"
+documentation = "https://docs.rs/crate/pdf-extract/"
+edition = "2021"
 keywords = ["pdf2text", "text", "pdf", "pdf2txt"]
+license = "MIT"
+name = "pdf-extract"
 repository = "https://github.com/jrmuizel/pdf-extract"
-edition = "2018"
+version = "0.7.0"
 
 [profile.release]
 debug = true
@@ -16,8 +16,8 @@ debug = true
 adobe-cmap-parser = "0.3.3"
 encoding = "0.2.33"
 euclid = "0.20.5"
-lopdf = { version = "0.29", default-features = false, features = [ "pom_parser" ] }
 linked-hash-map = "=0.5.3"
-postscript = "0.14"
+lopdf = {version = "0.29", default-features = false, features = ["pom_parser"]}
+postscript = "0.17"
 type1-encoding-parser = "0.1.0"
 unicode-normalization = "0.1.19"
