@@ -920,13 +920,10 @@ fn get_unicode_map<'a>(
                     be.push(((v[i] as u16) << 8) | v[i + 1] as u16);
                     i += 2;
                 }
-                match &be[..] {
-                    [0xd800..=0xdfff] => {
-                        // this range is not specified as not being encoded
-                        // we ignore them so we don't an error from from_utt16
-                        continue;
-                    }
-                    _ => {}
+                if let [0xd800..=0xdfff] = &be[..] {
+                    // this range is not specified as not being encoded
+                    // we ignore them so we don't an error from from_utt16
+                    continue;
                 }
                 let s = String::from_utf16(&be).unwrap();
 
@@ -1491,13 +1488,11 @@ impl<'a> Processor<'a> {
     }
 
     fn process_stream(
-        &mut self,
         doc: &'a Document,
         content: Vec<u8>,
         resources: &'a Dictionary,
         media_box: &MediaBox,
         output: &mut dyn OutputDev,
-        page_num: u32,
     ) -> Res<()> {
         let content = Content::decode(&content)?;
         let mut font_table = HashMap::new();
@@ -1844,7 +1839,7 @@ impl<'a> Processor<'a> {
                         .and_then(|n| n.as_dict().ok())
                         .unwrap_or(resources);
                     let contents = get_contents(xf);
-                    self.process_stream(doc, contents, resources, media_box, output, page_num)?;
+                    Processor::process_stream(doc, contents, resources, media_box, output)?;
                 }
                 _ => {
                     dlog!("unknown operation {:?}", operation);
@@ -2360,13 +2355,12 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Res<()> {
 
         output.begin_page(page_num, &media_box, art_box)?;
 
-        p.process_stream(
+        Processor::process_stream(
             doc,
             doc.get_page_content(dict.1).unwrap(),
             resources,
             &media_box,
             output,
-            page_num,
         )?;
 
         output.end_page()?;
