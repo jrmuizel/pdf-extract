@@ -119,9 +119,11 @@ fn pdf_to_utf8(s: &[u8]) -> Res<String> {
     }
 }
 
-fn to_utf8(encoding: &[u16], s: &[u8]) -> String {
+fn to_utf8(encoding: &[u16], s: &[u8]) -> Res<String> {
     if s.len() > 2 && s[0] == 0xfe && s[1] == 0xff {
-        return UTF_16BE.decode(&s[2..], DecoderTrap::Strict).unwrap();
+        return UTF_16BE
+            .decode(&s[2..], DecoderTrap::Strict)
+            .map_err(|_| "utf_16BE decode err".into());
     } else {
         let r: Vec<u8> = s
             .iter()
@@ -131,7 +133,9 @@ fn to_utf8(encoding: &[u16], s: &[u8]) -> String {
                 vec![(k >> 8) as u8, k as u8].into_iter()
             })
             .collect();
-        return UTF_16BE.decode(&r, DecoderTrap::Strict).unwrap();
+        return UTF_16BE
+            .decode(&r, DecoderTrap::Strict)
+            .map_err(|_| "utf_16BE decode err".into());
     }
 }
 
@@ -267,12 +271,7 @@ fn get<'a, T: FromOptObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8
 }
 
 fn get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Res<String> {
-    pdf_to_utf8(
-        dict.get(key)
-            .map(|o| maybe_deref(doc, o))?
-            .as_name()
-            .expect("name"),
-    )
+    pdf_to_utf8(dict.get(key).map(|o| maybe_deref(doc, o))?.as_name()?)
 }
 
 #[allow(dead_code)]
@@ -479,10 +478,16 @@ impl<'a> PdfSimpleFont<'a> {
                                         match unicode_map.entry(code as u32) {
                                             // If there's a unicode table entry missing use one based on the name
                                             Entry::Vacant(v) => {
-                                                v.insert(String::from_utf16(&be).unwrap());
+                                                v.insert(
+                                                    String::from_utf16(&be)
+                                                        .map_err(|_| "utf16 err")?,
+                                                );
                                             }
                                             Entry::Occupied(e) => {
-                                                if e.get() != &String::from_utf16(&be).unwrap() {
+                                                if e.get()
+                                                    != &String::from_utf16(&be)
+                                                        .map_err(|_| "utf16 err")?
+                                                {
                                                     println!("Unicode mismatch");
                                                 }
                                             }
@@ -501,7 +506,7 @@ impl<'a> PdfSimpleFont<'a> {
                         }
                     }
                 }
-                let name = pdf_to_utf8(encoding.get(b"Type").unwrap().as_name().unwrap());
+                let name = pdf_to_utf8(encoding.get(b"Type")?.as_name()?);
                 dlog!("name: {}", name?);
 
                 encoding_table = Some(table);
@@ -524,11 +529,10 @@ impl<'a> PdfSimpleFont<'a> {
                         encodings::WIN_ANSI_ENCODING
                             .iter()
                             .map(|x| {
-                                if let &Some(x) = x {
-                                    glyphnames::name_to_unicode(x).unwrap()
-                                } else {
+                                x.and_then(glyphnames::name_to_unicode).unwrap_or_else(|| {
+                                    dlog!("unknown character {:?}", x);
                                     0
-                                }
+                                })
                             })
                             .collect(),
                     );
@@ -563,7 +567,7 @@ impl<'a> PdfSimpleFont<'a> {
                             if w.0 != -1 {
                                 table[w.0 as usize] = if base_name == "ZapfDingbats" {
                                     zapfglyphnames::zapfdigbats_names_to_unicode(w.2)
-                                        .unwrap_or_else(|| panic!("bad name {:?}", w))
+                                        .ok_or(format!("Bad zapfdigbads name: {:?}", w))?
                                 } else {
                                     glyphnames::name_to_unicode(w.2).unwrap()
                                 }
@@ -762,7 +766,7 @@ impl<'a> Iterator for PdfFontIter<'a> {
 }
 
 trait PdfFont: Debug {
-    fn get_width(&self, id: CharCode) -> f64;
+    fn get_width(&self, id: CharCode) -> Res<f64>;
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)>;
     fn decode_char(&self, char: CharCode) -> Res<String>;
 
@@ -790,17 +794,18 @@ impl<'a> dyn PdfFont + 'a {
 }
 
 impl<'a> PdfFont for PdfSimpleFont<'a> {
-    fn get_width(&self, id: CharCode) -> f64 {
+    fn get_width(&self, id: CharCode) -> Res<f64> {
         let width = self.widths.get(&id);
         if let Some(width) = width {
-            *width
+            Ok(*width)
         } else {
             dlog!(
                 "missing width for {} falling back to default_width {:?}",
                 id,
                 self.font
             );
-            self.default_width.unwrap()
+            self.default_width
+                .ok_or_else(|| "missing default width".into())
         }
     }
     /*fn decode(&self, chars: &[u8]) -> String {
@@ -828,7 +833,7 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
             .unwrap_or(PDFDocEncoding);
         //dlog!("char_code {:?} {:?}", char, self.encoding);
 
-        Ok(to_utf8(encoding, &slice))
+        to_utf8(encoding, &slice)
     }
 }
 
@@ -839,12 +844,12 @@ impl<'a> fmt::Debug for PdfSimpleFont<'a> {
 }
 
 impl<'a> PdfFont for PdfType3Font<'a> {
-    fn get_width(&self, id: CharCode) -> f64 {
+    fn get_width(&self, id: CharCode) -> Res<f64> {
         let width = self.widths.get(&id);
         if let Some(width) = width {
-            *width
+            Ok(*width)
         } else {
-            panic!("missing width for {} {:?}", id, self.font);
+            Err(format!("missing width for {} {:?}", id, self.font).into())
         }
     }
     /*fn decode(&self, chars: &[u8]) -> String {
@@ -861,7 +866,7 @@ impl<'a> PdfFont for PdfType3Font<'a> {
             let s = unicode_map.get(&char);
             let s = match s {
                 None => {
-                    panic!("missing char {:?} in map {:?}", char, unicode_map)
+                    return Err(format!("missing char {:?} in map {:?}", char, unicode_map).into())
                 }
                 Some(s) => s.clone(),
             };
@@ -874,7 +879,7 @@ impl<'a> PdfFont for PdfType3Font<'a> {
             .unwrap_or(PDFDocEncoding);
         //dlog!("char_code {:?} {:?}", char, self.encoding);
 
-        Ok(to_utf8(encoding, &slice))
+        to_utf8(encoding, &slice)
     }
 }
 
@@ -905,9 +910,12 @@ fn get_unicode_map<'a>(
     match to_unicode {
         Some(&Object::Stream(ref stream)) => {
             let contents = get_contents(stream);
-            dlog!("Stream: {}", String::from_utf8(contents.clone()).unwrap());
+            dlog!(
+                "Stream: {}",
+                String::from_utf8(contents.clone()).unwrap_or_else(|_| "utf8 error".into())
+            );
 
-            let cmap = adobe_cmap_parser::get_unicode_map(&contents).unwrap();
+            let cmap = adobe_cmap_parser::get_unicode_map(&contents)?;
             let mut unicode = HashMap::new();
             // "It must use the beginbfchar, endbfchar, beginbfrange, and endbfrange operators to
             // define the mapping from character codes to Unicode character sequences expressed in
@@ -925,7 +933,7 @@ fn get_unicode_map<'a>(
                     // we ignore them so we don't an error from from_utt16
                     continue;
                 }
-                let s = String::from_utf16(&be).unwrap();
+                let s = String::from_utf16(&be).unwrap_or_else(|_| "utf8 error".into());
 
                 unicode.insert(k, s);
             }
@@ -936,11 +944,11 @@ fn get_unicode_map<'a>(
         None => {}
         Some(&Object::Name(ref name)) => {
             let name = pdf_to_utf8(name)?;
-            assert!(name == "Identity-H");
+            if name != "Identity-H" {
+                return Err(format!("unsupported cmap {:?}", name).into());
+            }
         }
-        _ => {
-            panic!("unsupported cmap {:?}", to_unicode)
-        }
+        _ => return Err(format!("unsupported cmap {:?}", to_unicode).into()),
     }
     Ok(unicode_map)
 }
@@ -961,7 +969,9 @@ impl<'a> PdfCIDFont<'a> {
             Object::Name(ref name) => {
                 let name = pdf_to_utf8(name)?;
                 dlog!("encoding {:?}", name);
-                assert!(name == "Identity-H");
+                if name != "Identity-H" {
+                    return Err(format!("unsupported encoding {:?}", name).into());
+                }
             }
             Object::Stream(ref stream) => {
                 let contents = get_contents(stream);
@@ -1025,14 +1035,14 @@ impl<'a> PdfCIDFont<'a> {
 }
 
 impl<'a> PdfFont for PdfCIDFont<'a> {
-    fn get_width(&self, id: CharCode) -> f64 {
+    fn get_width(&self, id: CharCode) -> Res<f64> {
         let width = self.widths.get(&id);
         if let Some(width) = width {
             dlog!("GetWidth {} -> {}", id, *width);
-            *width
+            Ok(*width)
         } else {
             dlog!("missing width for {} falling back to default_width", id);
-            self.default_width.unwrap()
+            self.default_width.ok_or("No Default Width".into())
         }
     } /*
       fn decode(&self, chars: &[u8]) -> String {
@@ -1047,7 +1057,7 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)> {
         let p = iter.next();
         if let Some(&c) = p {
-            let next = *iter.next().unwrap();
+            let next = *iter.next()?;
             Some((((c as u32) << 8) | next as u32, 2))
         } else {
             None
@@ -1265,7 +1275,7 @@ fn show_text(
         // 5.9 Extraction of Text Content
 
         //dlog!("w: {}", font.widths[&(*c as i64)]);
-        let w0 = font.get_width(c) / 1000.;
+        let w0 = font.get_width(c)? / 1000.;
 
         let mut spacing = ts.character_spacing;
         // "Word spacing is applied to every occurrence of the single-byte character code 32 in a
@@ -1438,7 +1448,7 @@ fn make_colorspace<'a>(
                     })
                 }
                 "ICCBased" => {
-                    let stream = maybe_deref(doc, &cs[1]).as_stream().unwrap();
+                    let stream = maybe_deref(doc, &cs[1]).as_stream()?;
                     dlog!("ICCBased {:?}", stream);
                     // XXX: we're going to be continually decompressing everytime this object is referenced
                     ColorSpace::ICCBased(get_contents(stream))
@@ -1483,10 +1493,6 @@ struct Processor<'a> {
 }
 
 impl<'a> Processor<'a> {
-    fn new() -> Processor<'a> {
-        Processor { _none: PhantomData }
-    }
-
     fn process_stream(
         doc: &'a Document,
         content: Vec<u8>,
@@ -1565,7 +1571,13 @@ impl<'a> Processor<'a> {
                         _ => operation
                             .operands
                             .iter()
-                            .map(|n| as_num(n).unwrap())
+                            .map(|n| match as_num(n) {
+                                Ok(n) => n,
+                                Err(_) => {
+                                    dlog!("unhandled color {:?}", n);
+                                    0.
+                                }
+                            })
                             .collect(),
                     };
                 }
@@ -1578,7 +1590,13 @@ impl<'a> Processor<'a> {
                         _ => operation
                             .operands
                             .iter()
-                            .map(|n| as_num(n).unwrap())
+                            .map(|n| match as_num(n) {
+                                Ok(n) => n,
+                                Err(_) => {
+                                    dlog!("unhandled color {:?}", n);
+                                    0.
+                                }
+                            })
                             .collect(),
                     };
                 }
@@ -1649,7 +1667,8 @@ impl<'a> Processor<'a> {
                     let font = font_table
                         .entry(name.to_owned())
                         .or_insert_with(|| {
-                            make_font(doc, get::<&Dictionary>(doc, fonts, name)).unwrap()
+                            let dict = get::<&Dictionary>(doc, fonts, name);
+                            make_font(doc, dict).ok()
                         })
                         .clone();
                     {
@@ -1661,7 +1680,7 @@ impl<'a> Processor<'a> {
                             //dlog!("font file: {:?}", f);
                         }*/
                     }
-                    gs.ts.font = Some(font);
+                    gs.ts.font = font;
 
                     gs.ts.font_size = as_num(&operation.operands[1])?;
                     dlog!(
@@ -2332,7 +2351,6 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Res<()> {
     let empty_resources = &Dictionary::new();
 
     let pages = doc.get_pages();
-    let mut p = Processor::new();
     for dict in pages {
         let page_num = dict.0;
         let page_dict = doc.get_object(dict.1)?.as_dict()?;
@@ -2357,7 +2375,7 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Res<()> {
 
         Processor::process_stream(
             doc,
-            doc.get_page_content(dict.1).unwrap(),
+            doc.get_page_content(dict.1)?,
             resources,
             &media_box,
             output,
