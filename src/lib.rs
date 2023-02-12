@@ -1737,15 +1737,19 @@ impl<'a> Processor<'a> {
                     if let Some(s) = s {
                         gs = s;
                     } else {
-                        println!("No state to pop");
+                        dlog!("No state to pop");
                     }
                 }
                 "gs" => {
                     let ext_gstate: &Dictionary = get(doc, resources, b"ExtGState");
                     let name = operation.operands[0].as_name()?;
                     let state: &Dictionary = get(doc, ext_gstate, name);
-                    // We throw away a potential Error here to be more lenient while parsing
-                    let _error_maybe = apply_state(&mut gs, state);
+                    match apply_state(&mut gs, state) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            dlog!("Error while applying graphics state: {}", e)
+                        }
+                    }
                 }
                 "i" => {
                     dlog!(
