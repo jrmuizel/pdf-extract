@@ -238,7 +238,7 @@ impl<'a> FromObj<'a> for f64 {
     fn from_obj(_doc: &Document, obj: &Object) -> Option<Self> {
         match obj {
             &Object::Integer(i) => Some(i as f64),
-            &Object::Real(f) => Some(f),
+            &Object::Real(f) => Some(f.into()),
             _ => None
         }
     }
@@ -1081,7 +1081,7 @@ impl Function {
 fn as_num(o: &Object) -> f64 {
     match o {
         &Object::Integer(i) => { i as f64 }
-        &Object::Real(f) => { f }
+        &Object::Real(f) => { f.into() }
         _ => { panic!("not a number") }
     }
 }
