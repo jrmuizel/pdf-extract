@@ -76,6 +76,12 @@ impl From<&str> for OutputError {
     }
 }
 
+impl From<String> for OutputError {
+    fn from(e: String) -> Self {
+        OutputError::OtherError(e)
+    }
+}
+
 macro_rules! dlog {
     ($($e:expr),*) => { {$(let _ = $e;)*} }
     //($($t:tt)*) => { println!($($t)*) }
@@ -96,7 +102,7 @@ fn get_catalog(doc: &Document) -> Res<&Dictionary> {
             return Ok(catalog);
         }
     }
-    panic!();
+    Err("No catalog / Root found".into())
 }
 
 fn get_pages(doc: &Document) -> Res<&Dictionary> {
@@ -394,12 +400,12 @@ fn is_core_font(name: &str) -> bool {
     )
 }
 
-fn encoding_to_unicode_table(name: &[u8]) -> Vec<u16> {
+fn encoding_to_unicode_table(name: &[u8]) -> Res<Vec<u16>> {
     let encoding = match name {
         b"MacRomanEncoding" => encodings::MAC_ROMAN_ENCODING,
         b"MacExpertEncoding" => encodings::MAC_EXPERT_ENCODING,
         b"WinAnsiEncoding" => encodings::WIN_ANSI_ENCODING,
-        _ => panic!("unexpected encoding {:?}", pdf_to_utf8(name)),
+        _ => return Err(format!("unexpected encoding {:?}", pdf_to_utf8(name)).into()),
     };
     let encoding_table = encoding
         .iter()
@@ -411,7 +417,7 @@ fn encoding_to_unicode_table(name: &[u8]) -> Vec<u16> {
             }
         })
         .collect();
-    encoding_table
+    Ok(encoding_table)
 }
 
 /* "Glyphs in the font are selected by single-byte character codes obtained from a string that
@@ -488,14 +494,14 @@ impl<'a> PdfSimpleFont<'a> {
         match encoding {
             Some(&Object::Name(ref encoding_name)) => {
                 dlog!("encoding {:?}", pdf_to_utf8(encoding_name));
-                encoding_table = Some(encoding_to_unicode_table(encoding_name));
+                encoding_table = Some(encoding_to_unicode_table(encoding_name)?);
             }
             Some(&Object::Dictionary(ref encoding)) => {
                 //dlog!("Encoding {:?}", encoding);
                 let mut table =
                     if let Some(base_encoding) = maybe_get_name(doc, encoding, b"BaseEncoding") {
                         dlog!("BaseEncoding {:?}", base_encoding);
-                        encoding_to_unicode_table(base_encoding)
+                        encoding_to_unicode_table(base_encoding)?
                     } else {
                         Vec::from(PDFDocEncoding)
                     };
@@ -707,14 +713,14 @@ impl<'a> PdfType3Font<'a> {
         match encoding {
             Some(&Object::Name(ref encoding_name)) => {
                 dlog!("encoding {:?}", pdf_to_utf8(encoding_name));
-                encoding_table = Some(encoding_to_unicode_table(encoding_name));
+                encoding_table = Some(encoding_to_unicode_table(encoding_name)?);
             }
             Some(&Object::Dictionary(ref encoding)) => {
                 //dlog!("Encoding {:?}", encoding);
                 let mut table =
                     if let Some(base_encoding) = maybe_get_name(doc, encoding, b"BaseEncoding") {
                         dlog!("BaseEncoding {:?}", base_encoding);
-                        encoding_to_unicode_table(base_encoding)
+                        encoding_to_unicode_table(base_encoding)?
                     } else {
                         Vec::from(PDFDocEncoding)
                     };
@@ -742,7 +748,7 @@ impl<'a> PdfType3Font<'a> {
                                 code += 1;
                             }
                             _ => {
-                                panic!("wrong type");
+                                return Err("wrong type".into());
                             }
                         }
                     }
@@ -1002,13 +1008,13 @@ impl<'a> PdfCIDFont<'a> {
             maybe_get_obj(doc, font, b"Encoding").expect("Encoding required in type0 fonts");
         dlog!("base_name {} {:?}", base_name, font);
 
-        match encoding {
-            &Object::Name(ref name) => {
+        match *encoding {
+            Object::Name(ref name) => {
                 let name = pdf_to_utf8(name)?;
                 dlog!("encoding {:?}", name);
                 assert!(name == "Identity-H");
             }
-            &Object::Stream(ref stream) => {
+            Object::Stream(ref stream) => {
                 let contents = get_contents(stream);
                 dlog!("Stream: {}", String::from_utf8(contents));
             }
@@ -1041,14 +1047,14 @@ impl<'a> PdfCIDFont<'a> {
                     let mut j = 0;
                     dlog!("wa: {:?} -> {:?}", cid, wa);
                     for w in wa {
-                        widths.insert((cid + j) as CharCode, as_num(w));
+                        widths.insert((cid + j) as CharCode, as_num(w)?);
                         j += 1;
                     }
                     i += 2;
                 } else {
-                    let c_first = w[i].as_i64().expect("first should be num");
-                    let c_last = w[i].as_i64().expect("last should be num");
-                    let c_width = as_num(w[i]);
+                    let c_first = w[i].as_i64().map_err(|_e| "first should be num")?;
+                    let c_last = w[i].as_i64().map_err(|_e| "last should be num")?;
+                    let c_width = as_num(w[i])?;
                     for id in c_first..c_last {
                         widths.insert(id as CharCode, c_width);
                     }
@@ -1186,11 +1192,11 @@ enum Function {
 }
 
 impl Function {
-    fn new(doc: &Document, obj: &Object) -> Function {
-        let dict = match obj {
-            &Object::Dictionary(ref dict) => dict,
-            &Object::Stream(ref stream) => &stream.dict,
-            _ => panic!(),
+    fn new(doc: &Document, obj: &Object) -> Res<Function> {
+        let dict = match *obj {
+            Object::Dictionary(ref dict) => dict,
+            Object::Stream(ref stream) => &stream.dict,
+            _ => return Err("Function should be a dictionary or stream".into()),
         };
         let function_type: i64 = get(doc, dict, b"FunctionType");
         let f = match function_type {
@@ -1238,16 +1244,16 @@ impl Function {
                 panic!("unhandled function type {}", function_type)
             }
         };
-        f
+        Ok(f)
     }
 }
 
-fn as_num(o: &Object) -> f64 {
-    match o {
-        &Object::Integer(i) => i as f64,
-        &Object::Real(f) => f,
+fn as_num(o: &Object) -> Res<f64> {
+    match *o {
+        Object::Integer(i) => Ok(i as f64) ,
+        Object::Real(f) => Ok(f),
         _ => {
-            panic!("not a number")
+            Err("not a number".into())
         }
     }
 }
@@ -1404,15 +1410,16 @@ impl Path {
     fn new() -> Path {
         Path { ops: Vec::new() }
     }
-    fn current_point(&self) -> (f64, f64) {
-        match self.ops.last().unwrap() {
+    fn current_point(&self) -> Res<(f64, f64)> {
+        let v = match self.ops.last().ok_or("empty path")? {
             &PathOp::MoveTo(x, y) => (x, y),
             &PathOp::LineTo(x, y) => (x, y),
             &PathOp::CurveTo(_, _, _, _, x, y) => (x, y),
             _ => {
-                panic!()
+                return Err("Unimplemented: current_point for path with no current point".into())
             }
-        }
+        };
+        Ok(v)
     }
 }
 
@@ -1474,7 +1481,7 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                     let name = pdf_to_utf8(cs[1].as_name().expect("second arg must be a name"))?;
                     let alternate_space =
                         pdf_to_utf8(cs[2].as_name().expect("second arg must be a name"))?;
-                    let tint_transform = Box::new(Function::new(doc, maybe_deref(doc, &cs[3])));
+                    let tint_transform = Box::new(Function::new(doc, maybe_deref(doc, &cs[3]))?);
 
                     dlog!("{:?} {:?} {:?}", name, alternate_space, tint_transform);
                     ColorSpace::Separation(Separation {
@@ -1516,7 +1523,7 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                 }
                 "Pattern" => ColorSpace::Pattern,
                 _ => {
-                    panic!("color_space {:?} {:?} {:?}", name, cs_name, cs)
+                    return Err(format!("color_space {:?} {:?} {:?}", name, cs_name, cs).into());
                 }
             }
         }
@@ -1550,7 +1557,7 @@ impl<'a> Processor<'a> {
                 font_size: std::f64::NAN,
                 character_spacing: 0.,
                 word_spacing: 0.,
-                horizontal_scaling: 100. / 100.,
+                horizontal_scaling: 1.,
                 leading: 0.,
                 rise: 0.,
                 tm: Transform2D::identity(),
@@ -1586,12 +1593,12 @@ impl<'a> Processor<'a> {
                 "cm" => {
                     assert!(operation.operands.len() == 6);
                     let m = Transform2D::row_major(
-                        as_num(&operation.operands[0]),
-                        as_num(&operation.operands[1]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3]),
-                        as_num(&operation.operands[4]),
-                        as_num(&operation.operands[5]),
+                        as_num(&operation.operands[0])?,
+                        as_num(&operation.operands[1])?,
+                        as_num(&operation.operands[2])?,
+                        as_num(&operation.operands[3])?,
+                        as_num(&operation.operands[4])?,
+                        as_num(&operation.operands[5])?,
                     );
                     gs.ctm = gs.ctm.pre_transform(&m);
                     dlog!("matrix {:?}", gs.ctm);
@@ -1610,7 +1617,7 @@ impl<'a> Processor<'a> {
                             dlog!("unhandled pattern color");
                             Vec::new()
                         }
-                        _ => operation.operands.iter().map(as_num).collect(),
+                        _ => operation.operands.iter().map(|n| as_num(n).unwrap()).collect(),
                     };
                 }
                 "sc" | "scn" => {
@@ -1619,7 +1626,7 @@ impl<'a> Processor<'a> {
                             dlog!("unhandled pattern color");
                             Vec::new()
                         }
-                        _ => operation.operands.iter().map(as_num).collect(),
+                        _ => operation.operands.iter().map(|n| as_num(n).unwrap()).collect(),
                     };
                 }
                 "G" | "g" | "RG" | "rg" | "K" | "k" => {
@@ -1666,27 +1673,27 @@ impl<'a> Processor<'a> {
                         show_text(&mut gs, s, &tlm, &flip_ctm, output)?;
                     }
                     _ => {
-                        panic!("unexpected Tj operand {:?}", operation)
+                        return Err(format!("unexpected Tj operand {:?}", operation).into());
                     }
                 },
                 "Tc" => {
-                    gs.ts.character_spacing = as_num(&operation.operands[0]);
+                    gs.ts.character_spacing = as_num(&operation.operands[0])?;
                 }
                 "Tw" => {
-                    gs.ts.word_spacing = as_num(&operation.operands[0]);
+                    gs.ts.word_spacing = as_num(&operation.operands[0])?;
                 }
                 "Tz" => {
-                    gs.ts.horizontal_scaling = as_num(&operation.operands[0]) / 100.;
+                    gs.ts.horizontal_scaling = as_num(&operation.operands[0])? / 100.;
                 }
                 "TL" => {
-                    gs.ts.leading = as_num(&operation.operands[0]);
+                    gs.ts.leading = as_num(&operation.operands[0])?;
                 }
                 "Tf" => {
                     let fonts: &Dictionary = get(doc, resources, b"Font");
                     let name = operation.operands[0].as_name()?;
                     let font = font_table
                         .entry(name.to_owned())
-                        .or_insert_with(|| make_font(doc, get::<&Dictionary>(doc, fonts, name)))
+                        .or_insert_with(|| make_font(doc, get::<&Dictionary>(doc, fonts, name)).unwrap())
                         .clone();
                     {
                         /*let file = font.get_descriptor().and_then(|desc| desc.get_file());
@@ -1699,7 +1706,7 @@ impl<'a> Processor<'a> {
                     }
                     gs.ts.font = Some(font);
 
-                    gs.ts.font_size = as_num(&operation.operands[1]);
+                    gs.ts.font_size = as_num(&operation.operands[1])?;
                     dlog!(
                         "font {} size: {} {:?}",
                         pdf_to_utf8(name),
@@ -1708,17 +1715,17 @@ impl<'a> Processor<'a> {
                     );
                 }
                 "Ts" => {
-                    gs.ts.rise = as_num(&operation.operands[0]);
+                    gs.ts.rise = as_num(&operation.operands[0])?;
                 }
                 "Tm" => {
                     assert!(operation.operands.len() == 6);
                     tlm = Transform2D::row_major(
-                        as_num(&operation.operands[0]),
-                        as_num(&operation.operands[1]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3]),
-                        as_num(&operation.operands[4]),
-                        as_num(&operation.operands[5]),
+                        as_num(&operation.operands[0])?,
+                        as_num(&operation.operands[1])?,
+                        as_num(&operation.operands[2])?,
+                        as_num(&operation.operands[3])?,
+                        as_num(&operation.operands[4])?,
+                        as_num(&operation.operands[5])?,
                     );
                     gs.ts.tm = tlm;
                     dlog!("Tm: matrix {:?}", gs.ts.tm);
@@ -1730,8 +1737,8 @@ impl<'a> Processor<'a> {
                       More precisely, this operator performs the following assignments:
                     */
                     assert!(operation.operands.len() == 2);
-                    let tx = as_num(&operation.operands[0]);
-                    let ty = as_num(&operation.operands[1]);
+                    let tx = as_num(&operation.operands[0])?;
+                    let ty = as_num(&operation.operands[1])?;
                     dlog!("translation: {} {}", tx, ty);
 
                     tlm = tlm.pre_transform(&Transform2D::create_translation(tx, ty));
@@ -1745,8 +1752,8 @@ impl<'a> Processor<'a> {
                       As a side effect, this operator sets the leading parameter in the text state.
                     */
                     assert!(operation.operands.len() == 2);
-                    let tx = as_num(&operation.operands[0]);
-                    let ty = as_num(&operation.operands[1]);
+                    let tx = as_num(&operation.operands[0])?;
+                    let ty = as_num(&operation.operands[1])?;
                     dlog!("translation: {} {}", tx, ty);
                     gs.ts.leading = -ty;
 
@@ -1789,52 +1796,52 @@ impl<'a> Processor<'a> {
                     );
                 }
                 "w" => {
-                    gs.line_width = as_num(&operation.operands[0]);
+                    gs.line_width = as_num(&operation.operands[0])?;
                 }
                 "J" | "j" | "M" | "d" | "ri" => {
                     dlog!("unknown graphics state operator {:?}", operation);
                 }
                 "m" => path.ops.push(PathOp::MoveTo(
-                    as_num(&operation.operands[0]),
-                    as_num(&operation.operands[1]),
+                    as_num(&operation.operands[0])?,
+                    as_num(&operation.operands[1])?,
                 )),
                 "l" => path.ops.push(PathOp::LineTo(
-                    as_num(&operation.operands[0]),
-                    as_num(&operation.operands[1]),
+                    as_num(&operation.operands[0])?,
+                    as_num(&operation.operands[1])?,
                 )),
                 "c" => path.ops.push(PathOp::CurveTo(
-                    as_num(&operation.operands[0]),
-                    as_num(&operation.operands[1]),
-                    as_num(&operation.operands[2]),
-                    as_num(&operation.operands[3]),
-                    as_num(&operation.operands[4]),
-                    as_num(&operation.operands[5]),
+                    as_num(&operation.operands[0])?,
+                    as_num(&operation.operands[1])?,
+                    as_num(&operation.operands[2])?,
+                    as_num(&operation.operands[3])?,
+                    as_num(&operation.operands[4])?,
+                    as_num(&operation.operands[5])?,
                 )),
                 "v" => {
-                    let (x, y) = path.current_point();
+                    let (x, y) = path.current_point()?;
                     path.ops.push(PathOp::CurveTo(
                         x,
                         y,
-                        as_num(&operation.operands[0]),
-                        as_num(&operation.operands[1]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3]),
+                        as_num(&operation.operands[0])?,
+                        as_num(&operation.operands[1])?,
+                        as_num(&operation.operands[2])?,
+                        as_num(&operation.operands[3])?,
                     ))
                 }
                 "y" => path.ops.push(PathOp::CurveTo(
-                    as_num(&operation.operands[0]),
-                    as_num(&operation.operands[1]),
-                    as_num(&operation.operands[2]),
-                    as_num(&operation.operands[3]),
-                    as_num(&operation.operands[2]),
-                    as_num(&operation.operands[3]),
+                    as_num(&operation.operands[0])?,
+                    as_num(&operation.operands[1])?,
+                    as_num(&operation.operands[2])?,
+                    as_num(&operation.operands[3])?,
+                    as_num(&operation.operands[2])?,
+                    as_num(&operation.operands[3])?,
                 )),
                 "h" => path.ops.push(PathOp::Close),
                 "re" => path.ops.push(PathOp::Rect(
-                    as_num(&operation.operands[0]),
-                    as_num(&operation.operands[1]),
-                    as_num(&operation.operands[2]),
-                    as_num(&operation.operands[3]),
+                    as_num(&operation.operands[0])?,
+                    as_num(&operation.operands[1])?,
+                    as_num(&operation.operands[2])?,
+                    as_num(&operation.operands[3])?,
                 )),
                 "s" | "f*" | "B" | "B*" | "b" => {
                     dlog!("unhandled path op {:?}", operation);
@@ -1864,7 +1871,7 @@ impl<'a> Processor<'a> {
                     // `Do` process an entire subdocument, so we do a recursive call to `process_stream`
                     // with the subdocument content and resources
                     let xobject: &Dictionary = get(doc, resources, b"XObject");
-                    let name = operation.operands[0].as_name().unwrap();
+                    let name = operation.operands[0].as_name()?;
                     let xf: &Stream = get(doc, xobject, name);
                     let resources = maybe_get_obj(doc, &xf.dict, b"Resources")
                         .and_then(|n| n.as_dict().ok())
@@ -2153,14 +2160,14 @@ impl<'a> OutputDev for SVGOutput<'a> {
         }*/
         let mut d = Vec::new();
         for op in &path.ops {
-            match op {
-                &PathOp::MoveTo(x, y) => d.push(format!("M{} {}", x, y)),
-                &PathOp::LineTo(x, y) => d.push(format!("L{} {}", x, y)),
-                &PathOp::CurveTo(x1, y1, x2, y2, x, y) => {
+            match *op {
+                PathOp::MoveTo(x, y) => d.push(format!("M{} {}", x, y)),
+                PathOp::LineTo(x, y) => d.push(format!("L{} {}", x, y)),
+                PathOp::CurveTo(x1, y1, x2, y2, x, y) => {
                     d.push(format!("C{} {} {} {} {} {}", x1, y1, x2, y2, x, y))
                 }
-                &PathOp::Close => d.push("Z".to_string()),
-                &PathOp::Rect(x, y, width, height) => {
+                PathOp::Close => d.push("Z".to_string()),
+                PathOp::Rect(x, y, width, height) => {
                     d.push(format!("M{} {}", x, y));
                     d.push(format!("L{} {}", x + width, y));
                     d.push(format!("L{} {}", x + width, y + height));
@@ -2377,7 +2384,7 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Res<()> {
     let mut p = Processor::new();
     for dict in pages {
         let page_num = dict.0;
-        let page_dict = doc.get_object(dict.1).unwrap().as_dict().unwrap();
+        let page_dict = doc.get_object(dict.1)?.as_dict()?;
         dlog!("page {} {:?}", page_num, page_dict);
         // XXX: Some pdfs lack a Resources directory
         let resources = get_inherited(doc, page_dict, b"Resources").unwrap_or(empty_resources);
