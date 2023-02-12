@@ -152,7 +152,9 @@ const PDFDocEncoding: &[u16] = &[
 
 fn pdf_to_utf8(s: &[u8]) -> Res<String> {
     if s.len() > 2 && s[0] == 0xfe && s[1] == 0xff {
-        return UTF_16BE.decode(&s[2..], DecoderTrap::Strict).map_err(|_| "pdf decode err".into());
+        return UTF_16BE
+            .decode(&s[2..], DecoderTrap::Strict)
+            .map_err(|_| "pdf decode err".into());
     } else {
         let r: Vec<u8> = s
             .iter()
@@ -162,7 +164,9 @@ fn pdf_to_utf8(s: &[u8]) -> Res<String> {
                 vec![(k >> 8) as u8, k as u8].into_iter()
             })
             .collect();
-        return UTF_16BE.decode(&r, DecoderTrap::Strict).map_err(|_| "pdf decode err".into());
+        return UTF_16BE
+            .decode(&r, DecoderTrap::Strict)
+            .map_err(|_| "pdf decode err".into());
     }
 }
 
@@ -328,8 +332,7 @@ fn maybe_get_name_string<'a>(
     dict: &'a Dictionary,
     key: &[u8],
 ) -> Option<String> {
-    let ob = maybe_get_obj(doc, dict, key)
-        .and_then(|n| n.as_name().ok());
+    let ob = maybe_get_obj(doc, dict, key).and_then(|n| n.as_name().ok());
     if let Some(ob) = ob {
         pdf_to_utf8(ob).ok()
     } else {
@@ -946,7 +949,10 @@ struct PdfCIDFont<'a> {
     default_width: Option<f64>, // only used for CID fonts and we should probably brake out the different font types
 }
 
-fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Res<Option<HashMap<u32, String>>> {
+fn get_unicode_map<'a>(
+    doc: &'a Document,
+    font: &'a Dictionary,
+) -> Res<Option<HashMap<u32, String>>> {
     let to_unicode = maybe_get_obj(doc, font, b"ToUnicode");
     dlog!("ToUnicode: {:?}", to_unicode);
     let mut unicode_map = None;
@@ -1018,9 +1024,7 @@ impl<'a> PdfCIDFont<'a> {
                 let contents = get_contents(stream);
                 dlog!("Stream: {}", String::from_utf8(contents));
             }
-            _ => {
-                return Err("Unsupported formatting".into())
-            }
+            _ => return Err("Unsupported formatting".into()),
         }
 
         // Sometimes a Type0 font might refer to the same underlying data as regular font. In this case we may be able to extract some encoding
@@ -1250,11 +1254,9 @@ impl Function {
 
 fn as_num(o: &Object) -> Res<f64> {
     match *o {
-        Object::Integer(i) => Ok(i as f64) ,
+        Object::Integer(i) => Ok(i as f64),
         Object::Real(f) => Ok(f),
-        _ => {
-            Err("not a number".into())
-        }
+        _ => Err("not a number".into()),
     }
 }
 
@@ -1360,7 +1362,7 @@ pub struct MediaBox {
     pub ury: f64,
 }
 
-fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
+fn apply_state(gs: &mut GraphicsState, state: &Dictionary) -> Res<()> {
     for (k, v) in state.iter() {
         let k: &[u8] = k.as_ref();
         match k {
@@ -1369,26 +1371,23 @@ fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
                     if name == b"None" {
                         gs.smask = None;
                     } else {
-                        panic!("unexpected smask name")
+                        return Err("unexpected smask name".into());
                     }
                 }
-                _ => {
-                    panic!("unexpected smask type {:?}", v)
-                }
+                _ => return Err(format!("unexpected smask type {:?}", v).into()),
             },
             b"Type" => match v {
                 &Object::Name(ref name) => {
                     assert_eq!(name, b"ExtGState")
                 }
-                _ => {
-                    panic!("unexpected type")
-                }
+                _ => return Err("unexpected type".into()),
             },
             _ => {
                 dlog!("unapplied state: {:?} {:?}", k, v);
             }
         }
     }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -1415,9 +1414,7 @@ impl Path {
             &PathOp::MoveTo(x, y) => (x, y),
             &PathOp::LineTo(x, y) => (x, y),
             &PathOp::CurveTo(_, _, _, _, x, y) => (x, y),
-            _ => {
-                return Err("Unimplemented: current_point for path with no current point".into())
-            }
+            _ => return Err("Unimplemented: current_point for path with no current point".into()),
         };
         Ok(v)
     }
@@ -1465,7 +1462,11 @@ pub enum ColorSpace {
     ICCBased(Vec<u8>),
 }
 
-fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary) -> Res<ColorSpace> {
+fn make_colorspace<'a>(
+    doc: &'a Document,
+    name: &[u8],
+    resources: &'a Dictionary,
+) -> Res<ColorSpace> {
     let space = match name {
         b"DeviceGray" => ColorSpace::DeviceGray,
         b"DeviceRGB" => ColorSpace::DeviceRGB,
@@ -1617,7 +1618,11 @@ impl<'a> Processor<'a> {
                             dlog!("unhandled pattern color");
                             Vec::new()
                         }
-                        _ => operation.operands.iter().map(|n| as_num(n).unwrap()).collect(),
+                        _ => operation
+                            .operands
+                            .iter()
+                            .map(|n| as_num(n).unwrap())
+                            .collect(),
                     };
                 }
                 "sc" | "scn" => {
@@ -1626,48 +1631,54 @@ impl<'a> Processor<'a> {
                             dlog!("unhandled pattern color");
                             Vec::new()
                         }
-                        _ => operation.operands.iter().map(|n| as_num(n).unwrap()).collect(),
+                        _ => operation
+                            .operands
+                            .iter()
+                            .map(|n| as_num(n).unwrap())
+                            .collect(),
                     };
                 }
                 "G" | "g" | "RG" | "rg" | "K" | "k" => {
                     dlog!("unhandled color operation {:?}", operation);
                 }
-                "TJ" => if let Object::Array(ref array) = operation.operands[0] {
-                    for e in array {
-                        match *e {
-                            Object::String(ref s, _) => {
-                                show_text(&mut gs, s, &tlm, &flip_ctm, output)?;
-                            }
-                            Object::Integer(i) => {
-                                let ts = &mut gs.ts;
-                                let w0 = 0.;
-                                let tj = i as f64;
-                                let ty = 0.;
-                                let tx =
-                                    ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size);
-                                ts.tm = ts
-                                    .tm
-                                    .pre_transform(&Transform2D::create_translation(tx, ty));
-                                dlog!("adjust text by: {} {:?}", i, ts.tm);
-                            }
-                            Object::Real(i) => {
-                                let ts = &mut gs.ts;
-                                let w0 = 0.;
-                                let tj = i;
-                                let ty = 0.;
-                                let tx =
-                                    ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size);
-                                ts.tm = ts
-                                    .tm
-                                    .pre_transform(&Transform2D::create_translation(tx, ty));
-                                dlog!("adjust text by: {} {:?}", i, ts.tm);
-                            }
-                            _ => {
-                                dlog!("kind of {:?}", e);
+                "TJ" => {
+                    if let Object::Array(ref array) = operation.operands[0] {
+                        for e in array {
+                            match *e {
+                                Object::String(ref s, _) => {
+                                    show_text(&mut gs, s, &tlm, &flip_ctm, output)?;
+                                }
+                                Object::Integer(i) => {
+                                    let ts = &mut gs.ts;
+                                    let w0 = 0.;
+                                    let tj = i as f64;
+                                    let ty = 0.;
+                                    let tx =
+                                        ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size);
+                                    ts.tm = ts
+                                        .tm
+                                        .pre_transform(&Transform2D::create_translation(tx, ty));
+                                    dlog!("adjust text by: {} {:?}", i, ts.tm);
+                                }
+                                Object::Real(i) => {
+                                    let ts = &mut gs.ts;
+                                    let w0 = 0.;
+                                    let tj = i;
+                                    let ty = 0.;
+                                    let tx =
+                                        ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size);
+                                    ts.tm = ts
+                                        .tm
+                                        .pre_transform(&Transform2D::create_translation(tx, ty));
+                                    dlog!("adjust text by: {} {:?}", i, ts.tm);
+                                }
+                                _ => {
+                                    dlog!("kind of {:?}", e);
+                                }
                             }
                         }
                     }
-                },
+                }
                 "Tj" => match operation.operands[0] {
                     Object::String(ref s, _) => {
                         show_text(&mut gs, s, &tlm, &flip_ctm, output)?;
@@ -1693,7 +1704,9 @@ impl<'a> Processor<'a> {
                     let name = operation.operands[0].as_name()?;
                     let font = font_table
                         .entry(name.to_owned())
-                        .or_insert_with(|| make_font(doc, get::<&Dictionary>(doc, fonts, name)).unwrap())
+                        .or_insert_with(|| {
+                            make_font(doc, get::<&Dictionary>(doc, fonts, name)).unwrap()
+                        })
                         .clone();
                     {
                         /*let file = font.get_descriptor().and_then(|desc| desc.get_file());
@@ -1995,12 +2008,7 @@ impl<'a> HTMLOutput<'a> {
 type ArtBox = (f64, f64, f64, f64);
 
 impl<'a> OutputDev for HTMLOutput<'a> {
-    fn begin_page(
-        &mut self,
-        page_num: u32,
-        media_box: &MediaBox,
-        _: Option<ArtBox>,
-    ) -> Res<()> {
+    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, _: Option<ArtBox>) -> Res<()> {
         write!(self.file, "<meta charset='utf-8' /> ")?;
         write!(self.file, "<!-- page {} -->", page_num)?;
         write!(self.file, "<div id='page{}' style='position: relative; height: {}px; width: {}px; border: 1px black solid'>", page_num, media_box.ury - media_box.lly, media_box.urx - media_box.llx)?;
@@ -2248,12 +2256,7 @@ impl<W: ConvertToFmt> PlainTextOutput<W> {
 /* There are some structural hints that PDFs can use to signal word and line endings:
  * however relying on these is not likely to be sufficient. */
 impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
-    fn begin_page(
-        &mut self,
-        _page_num: u32,
-        media_box: &MediaBox,
-        _: Option<ArtBox>,
-    ) -> Res<()> {
+    fn begin_page(&mut self, _page_num: u32, media_box: &MediaBox, _: Option<ArtBox>) -> Res<()> {
         self.flip_ctm = Transform2D::row_major(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
         Ok(())
     }
@@ -2329,9 +2332,7 @@ pub fn print_metadata(doc: &Document) -> Res<()> {
     dlog!("Pages: {:?}", get_pages(doc));
     dlog!(
         "Type: {:?}",
-        get_pages(doc)?
-            .get(b"Type")
-            .and_then(|x| x.as_name())?
+        get_pages(doc)?.get(b"Type").and_then(|x| x.as_name())?
     );
     Ok(())
 }
