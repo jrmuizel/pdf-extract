@@ -1410,10 +1410,10 @@ impl Path {
         Path { ops: Vec::new() }
     }
     fn current_point(&self) -> Res<(f64, f64)> {
-        let v = match self.ops.last().ok_or("empty path")? {
-            &PathOp::MoveTo(x, y) => (x, y),
-            &PathOp::LineTo(x, y) => (x, y),
-            &PathOp::CurveTo(_, _, _, _, x, y) => (x, y),
+        let v = match *self.ops.last().ok_or("empty path")? {
+            PathOp::MoveTo(x, y) => (x, y),
+            PathOp::LineTo(x, y) => (x, y),
+            PathOp::CurveTo(_, _, _, _, x, y) => (x, y),
             _ => return Err("Unimplemented: current_point for path with no current point".into()),
         };
         Ok(v)
@@ -1475,7 +1475,7 @@ fn make_colorspace<'a>(
         _ => {
             let colorspaces: &Dictionary = get(doc, resources, b"ColorSpace");
             let cs = maybe_get_array(doc, colorspaces, name)
-                .unwrap_or_else(|| panic!("missing colorspace {:?}", name));
+                .ok_or(format!("missing colorspace {:?}", name))?;
             let cs_name = pdf_to_utf8(cs[0].as_name().expect("first arg must be a name"))?;
             match cs_name.as_ref() {
                 "Separation" => {
@@ -1800,7 +1800,8 @@ impl<'a> Processor<'a> {
                     let ext_gstate: &Dictionary = get(doc, resources, b"ExtGState");
                     let name = operation.operands[0].as_name()?;
                     let state: &Dictionary = get(doc, ext_gstate, name);
-                    apply_state(&mut gs, state);
+                    // We throw away a potential Error here to be more lenient while parsing
+                    let _error_maybe = apply_state(&mut gs, state);
                 }
                 "i" => {
                     dlog!(
