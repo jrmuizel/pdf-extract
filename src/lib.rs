@@ -547,7 +547,7 @@ impl<'a> PdfSimpleFont<'a> {
                                 code += 1;
                             }
                             _ => {
-                                panic!("wrong type {:?}", o);
+                                return Err(format!("wrong type {:?}", o).into());
                             }
                         }
                     }
@@ -585,9 +585,7 @@ impl<'a> PdfSimpleFont<'a> {
                     );
                 }
             }
-            _ => {
-                panic!()
-            }
+            _ => return Err("unexpected encoding type".into()),
         }
 
         let mut width_map = HashMap::new();
@@ -766,7 +764,7 @@ impl<'a> PdfType3Font<'a> {
                 encoding_table = Some(table);
             }
             _ => {
-                panic!()
+                return Err("Wrong encoding".into());
             }
         }
 
@@ -817,7 +815,7 @@ impl<'a> Iterator for PdfFontIter<'a> {
 trait PdfFont: Debug {
     fn get_width(&self, id: CharCode) -> f64;
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)>;
-    fn decode_char(&self, char: CharCode) -> String;
+    fn decode_char(&self, char: CharCode) -> Res<String>;
 
     /*fn char_codes<'a>(&'a self, chars: &'a [u8]) -> PdfFontIter {
         let p = self;
@@ -835,7 +833,8 @@ impl<'a> dyn PdfFont + 'a {
     fn decode(&self, chars: &[u8]) -> String {
         let strings = self
             .char_codes(chars)
-            .map(|x| self.decode_char(x.0))
+            // TODO: handle error, don't unwrap
+            .map(|x| self.decode_char(x.0).unwrap())
             .collect::<Vec<_>>();
         strings.join("")
     }
@@ -863,15 +862,13 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)> {
         iter.next().map(|x| (*x as CharCode, 1))
     }
-    fn decode_char(&self, char: CharCode) -> String {
+    fn decode_char(&self, char: CharCode) -> Res<String> {
         let slice = [char as u8];
         if let Some(ref unicode_map) = self.unicode_map {
             let s = unicode_map.get(&char);
             let s = match s {
-                None => {
-                    panic!("missing char {:?} in map {:?}", char, unicode_map)
-                }
-                Some(s) => s.clone(),
+                None => Err(format!("missing char {:?} in map {:?}", char, unicode_map).into()),
+                Some(s) => Ok(s.clone()),
             };
             return s;
         }
@@ -882,7 +879,7 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
             .unwrap_or(PDFDocEncoding);
         //dlog!("char_code {:?} {:?}", char, self.encoding);
 
-        to_utf8(encoding, &slice)
+        Ok(to_utf8(encoding, &slice))
     }
 }
 
@@ -909,7 +906,7 @@ impl<'a> PdfFont for PdfType3Font<'a> {
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)> {
         iter.next().map(|x| (*x as CharCode, 1))
     }
-    fn decode_char(&self, char: CharCode) -> String {
+    fn decode_char(&self, char: CharCode) -> Res<String> {
         let slice = [char as u8];
         if let Some(ref unicode_map) = self.unicode_map {
             let s = unicode_map.get(&char);
@@ -919,7 +916,7 @@ impl<'a> PdfFont for PdfType3Font<'a> {
                 }
                 Some(s) => s.clone(),
             };
-            return s;
+            return Ok(s);
         }
         let encoding = self
             .encoding
@@ -928,7 +925,7 @@ impl<'a> PdfFont for PdfType3Font<'a> {
             .unwrap_or(PDFDocEncoding);
         //dlog!("char_code {:?} {:?}", char, self.encoding);
 
-        to_utf8(encoding, &slice)
+        Ok(to_utf8(encoding, &slice))
     }
 }
 
@@ -1036,7 +1033,8 @@ impl<'a> PdfCIDFont<'a> {
 
         dlog!("descendents {:?} {:?}", descendants, ciddict);
 
-        let font_dict = maybe_get_obj(doc, ciddict, b"FontDescriptor").expect("required");
+        let font_dict =
+            maybe_get_obj(doc, ciddict, b"FontDescriptor").ok_or("No FontDescriptor")?;
         dlog!("{:?}", font_dict);
         let _f = font_dict.as_dict().expect("must be dict");
         let default_width = get::<Option<i64>>(doc, ciddict, b"DW").unwrap_or(1000);
@@ -1106,9 +1104,9 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
             None
         }
     }
-    fn decode_char(&self, char: CharCode) -> String {
+    fn decode_char(&self, char: CharCode) -> Res<String> {
         let s = self.to_unicode.as_ref().and_then(|x| x.get(&char));
-        if let Some(s) = s {
+        let o = if let Some(s) = s {
             s.clone()
         } else {
             dlog!(
@@ -1118,7 +1116,8 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
                 self.to_unicode
             );
             "".to_string()
-        }
+        };
+        Ok(o)
     }
 }
 
@@ -1207,7 +1206,7 @@ impl Function {
             0 => {
                 let stream = match obj {
                     &Object::Stream(ref stream) => stream,
-                    _ => panic!(),
+                    _ => return Err("No stream".into()),
                 };
                 let range: Vec<f64> = get(doc, dict, b"Range");
                 let domain: Vec<f64> = get(doc, dict, b"Domain");
@@ -1244,9 +1243,7 @@ impl Function {
                 let n = get::<f64>(doc, dict, b"N");
                 Function::Type2(Type2Func { c0, c1, n })
             }
-            _ => {
-                panic!("unhandled function type {}", function_type)
-            }
+            _ => return Err(format!("unhandled function type {}", function_type).into()),
         };
         Ok(f)
     }
@@ -1331,7 +1328,7 @@ fn show_text(
             spacing += ts.word_spacing
         }
 
-        output.output_character(&trm, w0, spacing, ts.font_size, &font.decode_char(c))?;
+        output.output_character(&trm, w0, spacing, ts.font_size, &font.decode_char(c)?)?;
         let tj = 0.;
         let ty = 0.;
         let tx = ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size + spacing);
