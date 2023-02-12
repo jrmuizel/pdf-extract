@@ -2297,6 +2297,7 @@ pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(
     Ok(s)
 }
 
+/// Reads a pdf from a byte array and returns its text content
 pub fn extract_text_from_mem(buffer: &[u8]) -> Result<String, OutputError> {
     let mut s = String::new();
     {
