@@ -1,7 +1,0 @@
-A rust library to extract content from pdfs
-
-See also:
-https://github.com/elacin/PDFExtract/
-https://github.com/euske/pdfminer
-https://github.com/CrossRef/pdfextract
-https://github.com/kermitt2/pdfalto
