@@ -30,8 +30,10 @@ pub struct Space;
 pub type Transform = Transform2D<f64, Space, Space>;
 
 macro_rules! dlog {
+    // Throw away all debug logging
     ($($e:expr),*) => { {$(let _ = $e;)*} }
-    //($($t:tt)*) => { println!($($t)*) }
+    // Enable debug logging
+    // ($($t:tt)*) => { println!($($t)*) }
 }
 
 fn get_info(doc: &Document) -> Option<&Dictionary> {
@@ -500,7 +502,7 @@ impl<'a> PdfSimpleFont<'a> {
                     }
                 }
                 let name = pdf_to_utf8(encoding.get(b"Type").unwrap().as_name().unwrap());
-                dlog!("name: {}", name);
+                dlog!("name: {}", name?);
 
                 encoding_table = Some(table);
             }
@@ -513,7 +515,7 @@ impl<'a> PdfSimpleFont<'a> {
                         if let Some(unicode) = unicode {
                             table[code as usize] = unicode;
                         } else {
-                            dlog!("unknown character {}", pdf_to_utf8(&name));
+                            dlog!("unknown character {}", pdf_to_utf8(&name)?);
                         }
                     }
                     encoding_table = Some(table)
@@ -703,7 +705,7 @@ impl<'a> PdfType3Font<'a> {
                 }
                 let name_encoded = encoding.get(b"Type");
                 if let Ok(Object::Name(name)) = name_encoded {
-                    dlog!("name: {}", pdf_to_utf8(name));
+                    dlog!("name: {}", pdf_to_utf8(name)?);
                 } else {
                     dlog!("name not found");
                 }
@@ -948,7 +950,7 @@ fn get_unicode_map<'a>(
 
 impl<'a> PdfCIDFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> Res<PdfCIDFont<'a>> {
-        let base_name = get_name_string(doc, font, b"BaseFont");
+        let base_name = get_name_string(doc, font, b"BaseFont")?;
         let descendants =
             maybe_get_array(doc, font, b"DescendantFonts").expect("Descendant fonts required");
         let ciddict = maybe_deref(doc, &descendants[0])
@@ -966,7 +968,10 @@ impl<'a> PdfCIDFont<'a> {
             }
             Object::Stream(ref stream) => {
                 let contents = get_contents(stream);
-                dlog!("Stream: {}", String::from_utf8(contents));
+                dlog!(
+                    "Stream: {}",
+                    String::from_utf8(contents).map_err(|_| "bad utf8")?
+                );
             }
             _ => return Err("Unsupported formatting".into()),
         }
@@ -1666,7 +1671,7 @@ impl<'a> Processor<'a> {
                     gs.ts.font_size = as_num(&operation.operands[1])?;
                     dlog!(
                         "font {} size: {} {:?}",
-                        pdf_to_utf8(name),
+                        pdf_to_utf8(name)?,
                         gs.ts.font_size,
                         operation
                     );
@@ -2273,7 +2278,7 @@ pub fn print_metadata(doc: &Document) -> Res<()> {
     if let Some(info) = get_info(doc) {
         for (k, v) in info {
             if let &Object::String(ref s, StringFormat::Literal) = v {
-                dlog!("{}: {}", pdf_to_utf8(k), pdf_to_utf8(s));
+                dlog!("{}: {}", pdf_to_utf8(k)?, pdf_to_utf8(s)?);
             }
         }
     }
