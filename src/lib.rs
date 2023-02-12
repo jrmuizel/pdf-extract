@@ -1,9 +1,7 @@
-extern crate lopdf;
-
 use euclid::*;
 use lopdf::content::Content;
-use lopdf::*;
-use std::fmt::{Debug, Formatter};
+pub use lopdf::*;
+use std::fmt::Debug;
 extern crate adobe_cmap_parser;
 extern crate encoding;
 extern crate euclid;
@@ -229,7 +227,7 @@ impl<'a> FromObj<'a> for f64 {
     fn from_obj(_doc: &Document, obj: &Object) -> Option<Self> {
         match *obj {
             Object::Integer(i) => Some(i as f64),
-            Object::Real(f) => Some(f),
+            Object::Real(f) => Some(f as f64),
             _ => None,
         }
     }
@@ -1201,7 +1199,7 @@ impl Function {
 fn as_num(o: &Object) -> Res<f64> {
     match *o {
         Object::Integer(i) => Ok(i as f64),
-        Object::Real(f) => Ok(f),
+        Object::Real(f) => Ok(f as f64),
         _ => Err("not a number".into()),
     }
 }
@@ -1609,7 +1607,7 @@ impl<'a> Processor<'a> {
                                 Object::Real(i) => {
                                     let ts = &mut gs.ts;
                                     let w0 = 0.;
-                                    let tj = i;
+                                    let tj = i as f64;
                                     let ty = 0.;
                                     let tx =
                                         ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size);

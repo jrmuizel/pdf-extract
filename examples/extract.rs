@@ -1,7 +1,5 @@
-extern crate lopdf;
 extern crate pdf_extract;
 
-use lopdf::*;
 use pdf_extract::*;
 use std::env;
 use std::fs::File;
