@@ -11,6 +11,7 @@ extern crate type1_encoding_parser;
 extern crate unicode_normalization;
 use encoding::all::UTF_16BE;
 use encoding::{DecoderTrap, Encoding};
+use error::{OutputError, Res};
 use euclid::vec2;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -23,64 +24,12 @@ use std::slice::Iter;
 use std::str;
 mod core_fonts;
 mod encodings;
+mod error;
 mod glyphnames;
 mod zapfglyphnames;
 
 pub struct Space;
 pub type Transform = Transform2D<f64, Space, Space>;
-
-#[derive(Debug)]
-pub enum OutputError {
-    FormatError(std::fmt::Error),
-    IoError(std::io::Error),
-    PdfError(lopdf::Error),
-    OtherError(String),
-}
-
-type Res<T> = Result<T, OutputError>;
-
-impl std::fmt::Display for OutputError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self {
-            OutputError::FormatError(e) => write!(f, "Formating error: {}", e),
-            OutputError::IoError(e) => write!(f, "IO error: {}", e),
-            OutputError::PdfError(e) => write!(f, "PDF error: {}", e),
-            OutputError::OtherError(e) => write!(f, "Other error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for OutputError {}
-
-impl From<std::fmt::Error> for OutputError {
-    fn from(e: std::fmt::Error) -> Self {
-        OutputError::FormatError(e)
-    }
-}
-
-impl From<std::io::Error> for OutputError {
-    fn from(e: std::io::Error) -> Self {
-        OutputError::IoError(e)
-    }
-}
-
-impl From<lopdf::Error> for OutputError {
-    fn from(e: lopdf::Error) -> Self {
-        OutputError::PdfError(e)
-    }
-}
-
-impl From<&str> for OutputError {
-    fn from(e: &str) -> Self {
-        OutputError::OtherError(e.into())
-    }
-}
-
-impl From<String> for OutputError {
-    fn from(e: String) -> Self {
-        OutputError::OtherError(e)
-    }
-}
 
 macro_rules! dlog {
     ($($e:expr),*) => { {$(let _ = $e;)*} }
