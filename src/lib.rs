@@ -488,7 +488,7 @@ impl<'a> PdfSimpleFont<'a> {
                                                     != &String::from_utf16(&be)
                                                         .map_err(|_| "utf16 err")?
                                                 {
-                                                    println!("Unicode mismatch");
+                                                    dlog!("Unicode mismatch");
                                                 }
                                             }
                                         }
@@ -2002,12 +2002,17 @@ impl<'a> OutputDev for HTMLOutput<'a> {
             let position = trm.post_transform(&self.flip_ctm);
             let (x, y) = (position.m31, position.m32);
 
-            println!("accum {} {:?}", char, (x, y));
+            dlog!("accum {} {:?}", char, (x, y));
             self.buf += char;
         } else {
-            println!(
+            dlog!(
                 "flush {} {:?} {:?} {} {} {}",
-                char, trm, self.last_ctm, width, font_size, spacing
+                char,
+                trm,
+                self.last_ctm,
+                width,
+                font_size,
+                spacing
             );
             self.flush_string()?;
             self.buf = char.to_owned();
