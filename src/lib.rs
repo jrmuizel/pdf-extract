@@ -2078,6 +2078,9 @@ fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, ke
 }
 /// Parse a given document and output it to `output`
 pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), OutputError> {
+    if let Ok(encryption) = doc.trailer.get(b"Encrypt") {
+        eprintln!("Encrypted documents are not currently supported: See https://github.com/J-F-Liu/lopdf/issues/168")
+    }
     let empty_resources = &Dictionary::new();
 
     let pages = doc.get_pages();
