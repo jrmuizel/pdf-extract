@@ -275,6 +275,10 @@ fn get<'a, T: FromOptObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8
     T::from_opt_obj(doc, dict.get(key).ok(), key)
 }
 
+fn maybe_get<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<T> {
+    maybe_get_obj(doc, dict, key).and_then(|o| T::from_obj(doc, o))
+}
+
 fn get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> String {
     pdf_to_utf8(dict.get(key).map(|o| maybe_deref(doc, o)).unwrap_or_else(|_| panic!("deref")).as_name().expect("name"))
 }
@@ -495,7 +499,25 @@ impl<'a> PdfSimpleFont<'a> {
         }
 
         let mut width_map = HashMap::new();
-        if is_core_font(&base_name) {
+        /* "Ordinarily, a font dictionary that refers to one of the standard fonts
+            should omit the FirstChar, LastChar, Widths, and FontDescriptor entries.
+            However, it is permissible to override a standard font by including these
+            entries and embedding the font program in the PDF file."
+
+            Note: some PDFs include a descriptor but still don't include these entries */
+
+        // If we have widths prefer them over the core font widths. Needed for https://dkp.de/wp-content/uploads/parteitage/Sozialismusvorstellungen-der-DKP.pdf
+        if let (Some(first_char), Some(last_char), Some(widths)) = (maybe_get::<i64>(doc, font, b"FirstChar"), maybe_get::<i64>(doc, font, b"LastChar"), maybe_get::<Vec<f64>>(doc, font, b"Widths")) {
+            // Some PDF's don't have these like fips-197.pdf
+            let mut i: i64 = 0;
+            dlog!("first_char {:?}, last_char: {:?}, widths: {} {:?}", first_char, last_char, widths.len(), widths);
+
+            for w in widths {
+                width_map.insert((first_char + i) as CharCode, w);
+                i += 1;
+            }
+            assert_eq!(first_char + i - 1, last_char);
+        } else if is_core_font(&base_name) {
             for font_metrics in core_fonts::metrics().iter() {
                 if font_metrics.0 == base_name {
                     if let Some(ref encoding) = encoding_table {
@@ -539,24 +561,13 @@ impl<'a> PdfSimpleFont<'a> {
                         entries and embedding the font program in the PDF file."
 
                         Note: some PDFs include a descriptor but still don't include these entries */
-                    // assert!(maybe_get_obj(doc, font, "FirstChar").is_none());
-                    // assert!(maybe_get_obj(doc, font, "LastChar").is_none());
-                    // assert!(maybe_get_obj(doc, font, "Widths").is_none());
+                    // assert!(maybe_get_obj(doc, font, b"FirstChar").is_none());
+                    // assert!(maybe_get_obj(doc, font, b"LastChar").is_none());
+                    // assert!(maybe_get_obj(doc, font, b"Widths").is_none());
                 }
             }
         } else {
-            // Some PDF's don't have these like fips-197.pdf
-            let first_char: i64 = get(doc, font, b"FirstChar");
-            let last_char: i64 = get(doc, font, b"LastChar");
-            let widths: Vec<f64> = get(doc, font, b"Widths");
-            let mut i = 0;
-            dlog!("first_char {:?}, last_char: {:?}, widths: {} {:?}", first_char, last_char, widths.len(), widths);
-
-            for w in widths {
-                width_map.insert((first_char + i) as CharCode, w);
-                i += 1;
-            }
-            assert_eq!(first_char + i - 1, last_char);
+            panic!("no widths");
         }
 
         PdfSimpleFont {doc, font, widths: width_map, encoding: encoding_table, default_width: None, unicode_map}
@@ -713,7 +724,9 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
         if let Some(width) = width {
             return *width;
         } else {
-            dlog!("missing width for {} falling back to default_width {:?}", id, self.font);
+            let mut widths = self.widths.iter().collect::<Vec<_>>();
+            widths.sort_by_key(|x| x.0);
+            dlog!("missing width for {} len(widths) = {}, {:?} falling back to default_width {:?}", id, self.widths.len(), widths, self.font);
             return self.default_width.unwrap();
         }
     }
@@ -730,7 +743,7 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
         if let Some(ref unicode_map) = self.unicode_map {
             let s = unicode_map.get(&char);
             let s = match s {
-                None => { panic!("missing char {:?} in map {:?}", char, unicode_map)}
+                None => { panic!("missing char {:?} in map {:?} for {:?}", char, unicode_map, self.font)}
                 Some(s) => { s.clone() }
             };
             return s
@@ -1236,14 +1249,14 @@ impl Path {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CalGray {
     white_point: [f64; 3],
     black_point: Option<[f64; 3]>,
     gamma: Option<f64>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CalRGB {
     white_point: [f64; 3],
     black_point: Option<[f64; 3]>,
@@ -1251,14 +1264,14 @@ pub struct CalRGB {
     matrix: Option<Vec<f64>>
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Lab {
     white_point: [f64; 3],
     black_point: Option<[f64; 3]>,
     range: Option<[f64; 4]>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum AlternateColorSpace {
     DeviceGray,
     DeviceRGB,
