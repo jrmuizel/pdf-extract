@@ -1206,7 +1206,7 @@ fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
                         panic!("unexpected smask name")
                     }
                 }
-                _ => { panic!("unexpected smask type {:?}", v) }
+                _ => { gs.smask = None }
             }}
             b"Type" => { match v {
                 &Object::Name(ref name) => {
