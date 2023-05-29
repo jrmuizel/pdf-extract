@@ -2062,8 +2062,8 @@ pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<
     let mut s = String::new();
     {
         let mut output = PlainTextOutput::new(&mut s);
-        let doc = Document::load(path)?;
-        output_doc(&doc, &mut output)?;
+        let mut doc = Document::load(path)?;
+        output_doc(&mut doc, &mut output)?;
     }
     return Ok(s);
 }
@@ -2072,8 +2072,8 @@ pub fn extract_text_from_mem(buffer: &[u8]) -> Result<String, OutputError> {
     let mut s = String::new();
     {
         let mut output = PlainTextOutput::new(&mut s);
-        let doc = Document::load_mem(buffer)?;
-        output_doc(&doc, &mut output)?;
+        let mut doc = Document::load_mem(buffer)?;
+        output_doc(&mut doc, &mut output)?;
     }
     return Ok(s);
 }
@@ -2090,9 +2090,11 @@ fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, ke
     }
 }
 /// Parse a given document and output it to `output`
-pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), OutputError> {
-    if let Ok(_) = doc.trailer.get(b"Encrypt") {
-        eprintln!("Encrypted documents are not currently supported: See https://github.com/J-F-Liu/lopdf/issues/168")
+pub fn output_doc(doc: &mut Document, output: &mut dyn OutputDev) -> Result<(), OutputError> {
+
+    if doc.is_encrypted() {
+        // Set emptpy password for decryption
+        doc.decrypt("").expect("fail to decrypt document")
     }
     let empty_resources = &Dictionary::new();
 
