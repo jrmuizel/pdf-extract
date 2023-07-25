@@ -1126,7 +1126,7 @@ struct GraphicsState<'a>
 {
     ctm: Transform,
     ts: TextState<'a>,
-    smask: Option<&'a Dictionary>,
+    smask: Option<Dictionary>,
     fill_colorspace: ColorSpace,
     fill_color: Vec<f64>,
     stroke_colorspace: ColorSpace,
@@ -1205,6 +1205,9 @@ fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
                     } else {
                         panic!("unexpected smask name")
                     }
+                }
+                &Object::Dictionary(ref dict) => {
+                    gs.smask = Some(dict.clone());
                 }
                 _ => { panic!("unexpected smask type {:?}", v) }
             }}
