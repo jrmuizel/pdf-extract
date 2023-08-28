@@ -17,7 +17,6 @@ debug = true
 adobe-cmap-parser = "0.3.3"
 encoding = "0.2.33"
 euclid = "0.20.5"
-linked-hash-map = "=0.5.3"
 lopdf = {version = "0.30", default-features = false, features = ["nom_parser"]}
 postscript = "0.14"
 type1-encoding-parser = "0.1.0"
