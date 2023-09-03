@@ -1,13 +1,9 @@
-extern crate pdf_extract;
-extern crate lopdf;
-
 use std::env;
 use std::path::PathBuf;
 use std::path;
 use std::io::BufWriter;
 use std::fs::File;
 use pdf_extract::*;
-use lopdf::*;
 
 fn main() {
     //let output_kind = "html";
@@ -33,5 +29,5 @@ fn main() {
         _ => panic!(),
     };
 
-    output_doc(&doc, output.as_mut());
+    output_doc(&doc, output.as_mut()).unwrap();
 }
