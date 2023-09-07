@@ -1,5 +1,6 @@
 extern crate lopdf;
 
+use adobe_cmap_parser::{ByteMapping, CodeRange, CIDRange};
 use lopdf::content::Content;
 use lopdf::*;
 use euclid::*;
@@ -813,7 +814,7 @@ struct PdfCIDFont<'a> {
     #[allow(dead_code)]
     doc: &'a Document,
     #[allow(dead_code)]
-    encoding: Option<Vec<u16>>,
+    encoding: ByteMapping,
     to_unicode: Option<HashMap<u32, String>>,
     widths: HashMap<CharCode, f64>, // should probably just use i32 here
     default_width: Option<f64>, // only used for CID fonts and we should probably brake out the different font types
@@ -876,18 +877,20 @@ impl<'a> PdfCIDFont<'a> {
         let encoding = maybe_get_obj(doc, font, b"Encoding").expect("Encoding required in type0 fonts");
         dlog!("base_name {} {:?}", base_name, font);
 
-        match encoding {
+        let encoding = match encoding {
             &Object::Name(ref name) => {
                 let name = pdf_to_utf8(name);
                 dlog!("encoding {:?}", name);
                 assert!(name == "Identity-H");
+                ByteMapping { codespace: vec![CodeRange{width: 2, start: 0, end: 0xffff }], cid: vec![CIDRange{ src_code_lo: 0, src_code_hi: 0xffff, dst_CID_lo: 0 }]}
             }
             &Object::Stream(ref stream) => {
                 let contents = get_contents(stream);
                 dlog!("Stream: {}", String::from_utf8(contents.clone()).unwrap());
+                adobe_cmap_parser::get_byte_mapping(&contents).unwrap()
             }
             _ => { panic!("unsupported encoding {:?}", encoding)}
-        }
+        };
 
         // Sometimes a Type0 font might refer to the same underlying data as regular font. In this case we may be able to extract some encoding
         // data.
@@ -928,7 +931,7 @@ impl<'a> PdfCIDFont<'a> {
                 }
             }
         }
-        PdfCIDFont{doc, font, widths, to_unicode: unicode_map, encoding: None, default_width: Some(default_width as f64) }
+        PdfCIDFont{doc, font, widths, to_unicode: unicode_map, encoding, default_width: Some(default_width as f64) }
     }
 }
 
@@ -953,13 +956,25 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
     }*/
 
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)> {
-        let p = iter.next();
-        if let Some(&c) = p {
-            let next = *iter.next().unwrap();
-            Some((((c as u32) << 8)  | next as u32, 2))
-        } else {
-            None
+        let mut c = *iter.next()? as u32;
+        let mut code = None;
+        for width in 1..=4 {
+            for range in &self.encoding.codespace {
+                if c as u32 >= range.start && c as u32 <= range.end && range.width == width {
+                    code = Some((c as u32, width));
+                    break;
+                }
+            }
+            let next = *iter.next()?;
+            c = ((c as u32) << 8) | next as u32;
         }
+        let code = code?;
+        for range in &self.encoding.cid {
+            if code.0 >= range.src_code_lo && code.0 <= range.src_code_hi {
+                return Some((code.0 + range.dst_CID_lo, code.1 as u8));
+            }
+        }
+        None
     }
     fn decode_char(&self, char: CharCode) -> String {
         let s = self.to_unicode.as_ref().and_then(|x| x.get(&char));

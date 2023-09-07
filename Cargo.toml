@@ -14,7 +14,7 @@ include = ["src/**/*", "README.md"]
 debug = true
 
 [dependencies]
-adobe-cmap-parser = "0.3.3"
+adobe-cmap-parser = "0.4.0"
 encoding = "0.2.33"
 euclid = "0.20.5"
 lopdf = {version = "0.30", default-features = false, features = ["nom_parser"]}
