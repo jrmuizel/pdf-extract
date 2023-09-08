@@ -958,11 +958,11 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)> {
         let mut c = *iter.next()? as u32;
         let mut code = None;
-        for width in 1..=4 {
+        'outer: for width in 1..=4 {
             for range in &self.encoding.codespace {
                 if c as u32 >= range.start && c as u32 <= range.end && range.width == width {
                     code = Some((c as u32, width));
-                    break;
+                    break 'outer;
                 }
             }
             let next = *iter.next()?;
