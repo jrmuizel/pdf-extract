@@ -1214,11 +1214,11 @@ pub struct MediaBox {
     pub ury: f64
 }
 
-fn apply_state(gs: &mut GraphicsState, state: &Dictionary) {
+fn apply_state(doc: &Document, gs: &mut GraphicsState, state: &Dictionary) {
     for (k, v) in state.iter() {
         let k : &[u8] = k.as_ref();
         match k {
-            b"SMask" => { match v {
+            b"SMask" => { match maybe_deref(doc, v)  {
                 &Object::Name(ref name) => {
                     if name == b"None" {
                         gs.smask = None;
@@ -1668,7 +1668,7 @@ impl<'a> Processor<'a> {
                     let ext_gstate: &Dictionary = get(doc, resources, b"ExtGState");
                     let name = operation.operands[0].as_name().unwrap();
                     let state: &Dictionary = get(doc, ext_gstate, name);
-                    apply_state(&mut gs, state);
+                    apply_state(doc, &mut gs, state);
                 }
                 "i" => { dlog!("unhandled graphics state flattness operator {:?}", operation); }
                 "w" => { gs.line_width = as_num(&operation.operands[0]); }
