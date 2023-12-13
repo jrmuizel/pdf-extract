@@ -466,7 +466,7 @@ impl<'a> PdfSimpleFont<'a> {
                                 }
                                 dlog!("{} = {} ({:?})", code, name, unicode);
                                 if let Some(ref mut unicode_map) = unicode_map {
-                                    dlog!("{} {}", code, unicode_map[&(code as u32)]);
+                                    dlog!("{} {}", code, unicode_map.get(&(code as u32)));
                                 }
                                 code += 1;
                             }
