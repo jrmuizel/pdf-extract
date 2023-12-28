@@ -463,6 +463,22 @@ impl<'a> PdfSimpleFont<'a> {
                                             }
                                         }
                                     }
+                                } else {
+                                    match unicode_map {
+                                        Some(ref mut unicode_map) if base_name.contains("FontAwesome") => {
+                                            // the fontawesome tex package will use glyph names that don't have a corresponding unicode
+                                            // code point, so we'll use an empty string instead. See issue #76
+                                            match unicode_map.entry(code as u32) {
+                                                Entry::Vacant(v) => { v.insert("".to_owned()); }
+                                                Entry::Occupied(e) => {
+                                                    panic!("unexpected entry in unicode map")
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            println!("unknown glyph name '{}' for font {}", name, base_name);
+                                        }
+                                    }
                                 }
                                 dlog!("{} = {} ({:?})", code, name, unicode);
                                 if let Some(ref mut unicode_map) = unicode_map {
