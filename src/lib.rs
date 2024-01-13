@@ -1190,14 +1190,15 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
     output.begin_word()?;
 
     for (c, length) in font.char_codes(s) {
+        // 5.3.3 Text Space Details
         let tsm = Transform2D::row_major(ts.horizontal_scaling,
                                                  0.,
                                                  0.,
                                                  1.0,
                                                  0.,
                                                  ts.rise);
-        let trm = ts.tm.pre_transform(&gs.ctm);
-        let trm = trm.post_transform(&tsm);
+        // Trm = Tsm × Tm × CTM
+        let trm = tsm.post_transform(&ts.tm.post_transform(&gs.ctm));
         //dlog!("ctm: {:?} tm {:?}", gs.ctm, tm);
         //dlog!("current pos: {:?}", position);
         // 5.9 Extraction of Text Content
