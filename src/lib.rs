@@ -1449,7 +1449,10 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                     }
                     "Pattern" => {
                         ColorSpace::Pattern
-                    }
+                    },
+                    "DeviceGray" => ColorSpace::DeviceGray,
+                    "DeviceRGB" => ColorSpace::DeviceRGB,
+                    "DeviceCMYK" => ColorSpace::DeviceCMYK,
                     _ => {
                         panic!("color_space {:?} {:?} {:?}", name, cs_name, cs)
                     }
