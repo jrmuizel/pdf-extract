@@ -2129,6 +2129,19 @@ pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<
     return Ok(s);
 }
 
+pub fn extract_text_encrypted<P: std::convert::AsRef<std::path::Path>, PW: AsRef<[u8]>>(
+    path: P,
+    password: PW,
+) -> Result<String, OutputError> {
+    let mut s = String::new();
+    {
+        let mut output = PlainTextOutput::new(&mut s);
+        let mut doc = Document::load(path)?;
+        output_doc_encrypted(&mut doc, &mut output, password)?;
+    }
+    Ok(s)
+}
+
 pub fn extract_text_from_mem(buffer: &[u8]) -> Result<String, OutputError> {
     let mut s = String::new();
     {
@@ -2137,6 +2150,19 @@ pub fn extract_text_from_mem(buffer: &[u8]) -> Result<String, OutputError> {
         output_doc(&doc, &mut output)?;
     }
     return Ok(s);
+}
+
+pub fn extract_text_from_mem_encrypted<PW: AsRef<[u8]>>(
+    buffer: &[u8],
+    password: PW,
+) -> Result<String, OutputError> {
+    let mut s = String::new();
+    {
+        let mut output = PlainTextOutput::new(&mut s);
+        let mut doc = Document::load_mem(buffer)?;
+        output_doc_encrypted(&mut doc, &mut output, password)?;
+    }
+    Ok(s)
 }
 
 fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<T> {
@@ -2150,10 +2176,20 @@ fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, ke
         get_inherited(doc, parent, key)
     }
 }
+
+pub fn output_doc_encrypted<PW: AsRef<[u8]>>(
+    doc: &mut Document,
+    output: &mut dyn OutputDev,
+    password: PW,
+) -> Result<(), OutputError> {
+    doc.decrypt(password)?;
+    output_doc(doc, output)
+}
+
 /// Parse a given document and output it to `output`
 pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), OutputError> {
-    if let Ok(_) = doc.trailer.get(b"Encrypt") {
-        eprintln!("Encrypted documents are not currently supported: See https://github.com/J-F-Liu/lopdf/issues/168")
+    if doc.is_encrypted() {
+        eprintln!("Encrypted documents must be decrypted with {{extract_text|extract_text_from_mem|output_doc}}_encrypted")
     }
     let empty_resources = &Dictionary::new();
 
