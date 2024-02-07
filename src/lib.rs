@@ -4,6 +4,7 @@ use adobe_cmap_parser::{ByteMapping, CodeRange, CIDRange};
 use lopdf::content::Content;
 use lopdf::*;
 use euclid::*;
+use lopdf::encryption::DecryptionError;
 use std::fmt::{Debug, Formatter};
 extern crate encoding;
 extern crate euclid;
@@ -2123,10 +2124,27 @@ pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<
     let mut s = String::new();
     {
         let mut output = PlainTextOutput::new(&mut s);
-        let doc = Document::load(path)?;
+        let mut doc = Document::load(path)?;
+        maybe_decrypt(&mut doc)?;
         output_doc(&doc, &mut output)?;
     }
-    return Ok(s);
+    Ok(s)
+}
+
+fn maybe_decrypt(doc: &mut Document) -> Result<(), OutputError> {
+    if ! doc.is_encrypted() {
+        return Ok(());
+    }
+
+    if let Err(e) = doc.decrypt("") {
+        if let Error::Decryption(DecryptionError::IncorrectPassword) = e {
+            eprintln!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted")
+        }
+
+        return Err(OutputError::PdfError(e));
+    }
+
+    Ok(())
 }
 
 pub fn extract_text_encrypted<P: std::convert::AsRef<std::path::Path>, PW: AsRef<[u8]>>(
@@ -2146,10 +2164,11 @@ pub fn extract_text_from_mem(buffer: &[u8]) -> Result<String, OutputError> {
     let mut s = String::new();
     {
         let mut output = PlainTextOutput::new(&mut s);
-        let doc = Document::load_mem(buffer)?;
+        let mut doc = Document::load_mem(buffer)?;
+        maybe_decrypt(&mut doc)?;
         output_doc(&doc, &mut output)?;
     }
-    return Ok(s);
+    Ok(s)
 }
 
 pub fn extract_text_from_mem_encrypted<PW: AsRef<[u8]>>(
@@ -2189,7 +2208,7 @@ pub fn output_doc_encrypted<PW: AsRef<[u8]>>(
 /// Parse a given document and output it to `output`
 pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), OutputError> {
     if doc.is_encrypted() {
-        eprintln!("Encrypted documents must be decrypted with {{extract_text|extract_text_from_mem|output_doc}}_encrypted")
+        eprintln!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
     }
     let empty_resources = &Dictionary::new();
 
