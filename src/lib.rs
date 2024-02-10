@@ -589,7 +589,7 @@ impl<'a> PdfSimpleFont<'a> {
             panic!("no widths");
         }
 
-        PdfSimpleFont {doc, font, widths: width_map, encoding: encoding_table, default_width: None, unicode_map}
+        PdfSimpleFont {doc, font, widths: width_map, encoding: encoding_table, default_width: Some(1.0), unicode_map}
     }
 
     #[allow(dead_code)]
