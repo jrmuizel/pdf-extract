@@ -305,7 +305,7 @@ struct PdfSimpleFont<'a> {
     encoding: Option<Vec<u16>>,
     unicode_map: Option<HashMap<u32, String>>,
     widths: HashMap<CharCode, f64>, // should probably just use i32 here
-    default_width: Option<f64>, // only used for CID fonts and we should probably brake out the different font types
+    missing_width: f64,
 }
 
 #[derive(Clone)]
@@ -589,7 +589,8 @@ impl<'a> PdfSimpleFont<'a> {
             panic!("no widths");
         }
 
-        PdfSimpleFont {doc, font, widths: width_map, encoding: encoding_table, default_width: None, unicode_map}
+        let missing_width = get::<Option<f64>>(doc, font, b"MissingWidth").unwrap_or(0.);
+        PdfSimpleFont {doc, font, widths: width_map, encoding: encoding_table, missing_width, unicode_map}
     }
 
     #[allow(dead_code)]
@@ -745,8 +746,8 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
         } else {
             let mut widths = self.widths.iter().collect::<Vec<_>>();
             widths.sort_by_key(|x| x.0);
-            dlog!("missing width for {} len(widths) = {}, {:?} falling back to default_width {:?}", id, self.widths.len(), widths, self.font);
-            return self.default_width.unwrap();
+            dlog!("missing width for {} len(widths) = {}, {:?} falling back to missing_width {:?}", id, self.widths.len(), widths, self.font);
+            return self.missing_width;
         }
     }
     /*fn decode(&self, chars: &[u8]) -> String {
