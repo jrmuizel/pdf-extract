@@ -18,3 +18,6 @@ assert!(out.contains("This is a small demonstration"));
 - https://github.com/CrossRef/pdfextract
 - https://github.com/VikParuchuri/marker
 - https://github.com/kermitt2/pdfalto used by [grobid](https://github.com/kermitt2/grobid/)
+
+### Not PDF specific
+- https://github.com/Layout-Parser/layout-parser
