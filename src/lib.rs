@@ -483,7 +483,11 @@ impl<'a> PdfSimpleFont<'a> {
                                 }
                                 dlog!("{} = {} ({:?})", code, name, unicode);
                                 if let Some(ref mut unicode_map) = unicode_map {
-                                    dlog!("{} {}", code, unicode_map[&(code as u32)]);
+                                    // The unicode map might not have the code in it, but the code might
+                                    // not be used so we don't want to panic here.
+                                    // An example of this is the 'suppress' character in the TeX Latin Modern font.
+                                    // This shows up in https://arxiv.org/pdf/2405.01295v1.pdf
+                                    dlog!("{} {:?}", code, unicode_map.get(&(code as u32)));
                                 }
                                 code += 1;
                             }
