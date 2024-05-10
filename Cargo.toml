@@ -7,7 +7,7 @@ keywords = ["pdf2text", "text", "pdf", "pdf2txt"]
 license = "MIT"
 name = "pdf-extract"
 repository = "https://github.com/jrmuizel/pdf-extract"
-version = "0.7.6"
+version = "0.7.7"
 include = ["src/**/*", "README.md"]
 
 [profile.release]
