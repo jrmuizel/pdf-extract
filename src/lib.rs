@@ -32,6 +32,7 @@ pub enum OutputError {
     FormatError(std::fmt::Error),
     IoError(std::io::Error),
     PdfError(lopdf::Error),
+    Encrypted,
 }
 
 impl std::fmt::Display for OutputError {
@@ -40,6 +41,7 @@ impl std::fmt::Display for OutputError {
             OutputError::FormatError(e) => write!(f, "Formating error: {}", e),
             OutputError::IoError(e) => write!(f, "IO error: {}", e),
             OutputError::PdfError(e) => write!(f, "PDF error: {}", e),
+            OutputError::Encrypted => write!(f, "encrypted"),
         }
     }
 }
@@ -2789,6 +2791,7 @@ pub fn extract_text_encrypted<P: std::convert::AsRef<std::path::Path>, PW: AsRef
     {
         let mut output = PlainTextOutput::new(&mut s);
         let mut doc = Document::load(path)?;
+
         output_doc_encrypted(&mut doc, &mut output, password)?;
     }
     Ok(s)
@@ -2800,7 +2803,9 @@ pub fn extract_text_from_mem(buffer: &[u8]) -> Result<String, OutputError> {
     {
         let mut output = PlainTextOutput::new(&mut s);
         let mut doc = Document::load_mem(buffer)?;
+
         maybe_decrypt(&mut doc)?;
+
         output_doc(&doc, &mut output)?;
     }
 
@@ -2854,6 +2859,8 @@ pub fn output_doc_encrypted<PW: AsRef<[u8]>>(
 pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), OutputError> {
     if doc.is_encrypted() {
         error!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
+
+        return Err(OutputError::Encrypted);
     }
 
     let empty_resources = &Dictionary::new();
@@ -2868,7 +2875,7 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), Outp
         // XXX: Some pdfs lack a Resources directory
         let resources = get_inherited(doc, page_dict, b"Resources").unwrap_or(empty_resources);
 
-        trace!("resources {:?}", resources);
+        debug!("resources {:?}", resources);
 
         // pdfium searches up the page tree for MediaBoxes as needed
         let media_box: Vec<f64> = get_inherited(doc, page_dict, b"MediaBox").expect("MediaBox");
