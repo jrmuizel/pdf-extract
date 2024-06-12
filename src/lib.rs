@@ -359,18 +359,21 @@ struct PdfType3Font<'a> {
     widths: HashMap<CharCode, f64>, // should probably just use i32 here
 }
 
-fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Rc<dyn PdfFont + 'a> {
+fn make_font<'a>(
+    doc: &'a Document,
+    font: &'a Dictionary,
+) -> Result<Rc<dyn PdfFont + 'a>, OutputError> {
     let subtype = get_name_string(doc, font, b"Subtype");
 
     trace!("MakeFont({})", subtype);
 
-    if subtype == "Type0" {
+    Ok(if subtype == "Type0" {
         Rc::new(PdfCIDFont::new(doc, font))
     } else if subtype == "Type3" {
         Rc::new(PdfType3Font::new(doc, font))
     } else {
         Rc::new(PdfSimpleFont::new(doc, font))
-    }
+    })
 }
 
 fn is_core_font(name: &str) -> bool {
@@ -1901,7 +1904,9 @@ impl Processor {
                     gs.ts.tm = tlm;
                 }
                 "cm" => {
-                    assert!(operation.operands.len() == 6);
+                    if operation.operands.len() != 6 {
+                        return Err(OutputError::Error("cm has wrong size".into()));
+                    }
 
                     let m = Transform2D::row_major(
                         as_num(&operation.operands[0]),
@@ -2014,7 +2019,7 @@ impl Processor {
                     let name = operation.operands[0].as_name()?;
                     let font = font_table
                         .entry(name.to_owned())
-                        .or_insert_with(|| make_font(doc, get::<&Dictionary>(doc, fonts, name)))
+                        .or_insert_with(|| make_font(doc, get::<&Dictionary>(doc, fonts, name))?)
                         .clone();
                     {
                         /*let file = font.get_descriptor().and_then(|desc| desc.get_file());
