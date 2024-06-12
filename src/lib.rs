@@ -186,7 +186,10 @@ impl<'a, T: FromObj<'a>> FromOptObj<'a> for T {
     fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &[u8]) -> Result<Self> {
         T::from_obj(
             doc,
-            obj.unwrap_or_else(|| panic!("{}", String::from_utf8_lossy(key).to_string())),
+            obj.ok_or(PdfExtractError::Error(format!(
+                "{}",
+                String::from_utf8_lossy(key)
+            )))?,
         )
         .ok_or(PdfExtractError::Error("wrong type".into()).into())
     }
@@ -372,7 +375,7 @@ fn is_core_font(name: &str) -> bool {
     )
 }
 
-fn encoding_to_unicode_table(name: &[u8]) -> Vec<u16> {
+fn encoding_to_unicode_table(name: &[u8]) -> Result<Vec<u16>> {
     let encoding = match name {
         b"MacRomanEncoding" => encodings::MAC_ROMAN_ENCODING,
         b"MacExpertEncoding" => encodings::MAC_EXPERT_ENCODING,
@@ -391,7 +394,7 @@ fn encoding_to_unicode_table(name: &[u8]) -> Vec<u16> {
         })
         .collect();
 
-    encoding_table
+    Ok(encoding_table)
 }
 
 /* "Glyphs in the font are selected by single-byte character codes obtained from a string that
@@ -481,7 +484,7 @@ impl<'a> PdfSimpleFont<'a> {
             Some(Object::Name(ref encoding_name)) => {
                 trace!("encoding {:?}", pdf_to_utf8(encoding_name));
 
-                encoding_table = Some(encoding_to_unicode_table(encoding_name));
+                encoding_table = Some(encoding_to_unicode_table(encoding_name)?);
             }
             Some(Object::Dictionary(ref encoding)) => {
                 //trace!("Encoding {:?}", encoding);
@@ -490,7 +493,7 @@ impl<'a> PdfSimpleFont<'a> {
                     if let Some(base_encoding) = maybe_get_name(doc, encoding, b"BaseEncoding") {
                         trace!("BaseEncoding {:?}", base_encoding);
 
-                        encoding_to_unicode_table(base_encoding)
+                        encoding_to_unicode_table(base_encoding)?
                     } else {
                         Vec::from(PDFDocEncoding)
                     };
@@ -787,7 +790,7 @@ impl<'a> PdfType3Font<'a> {
             Some(Object::Name(ref encoding_name)) => {
                 trace!("encoding {:?}", pdf_to_utf8(encoding_name));
 
-                Some(encoding_to_unicode_table(encoding_name))
+                Some(encoding_to_unicode_table(encoding_name)?)
             }
             Some(Object::Dictionary(ref encoding)) => {
                 //trace!("Encoding {:?}", encoding);
@@ -795,7 +798,7 @@ impl<'a> PdfType3Font<'a> {
                     if let Some(base_encoding) = maybe_get_name(doc, encoding, b"BaseEncoding") {
                         trace!("BaseEncoding {:?}", base_encoding);
 
-                        encoding_to_unicode_table(base_encoding)
+                        encoding_to_unicode_table(base_encoding)?
                     } else {
                         Vec::from(PDFDocEncoding)
                     };
@@ -1134,6 +1137,7 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
             panic!("unsupported cmap {:?}", to_unicode)
         }
     }
+
     unicode_map
 }
 
@@ -1580,7 +1584,7 @@ pub struct MediaBox {
     pub ury: f64,
 }
 
-fn apply_state(doc: &Document, gs: &mut GraphicsState, state: &Dictionary) {
+fn apply_state(doc: &Document, gs: &mut GraphicsState, state: &Dictionary) -> Result<()> {
     for (k, v) in state.iter() {
         let k: &[u8] = k.as_ref();
 
@@ -1590,29 +1594,30 @@ fn apply_state(doc: &Document, gs: &mut GraphicsState, state: &Dictionary) {
                     if name == b"None" {
                         gs.smask = None;
                     } else {
-                        panic!("unexpected smask name")
+                        Err(PdfExtractError::Error("unexpected smask name".into()))?
                     }
                 }
                 Object::Dictionary(ref dict) => {
                     gs.smask = Some(dict.clone());
                 }
-                _ => {
-                    panic!("unexpected smask type {:?}", v)
-                }
+                _ => Err(PdfExtractError::Error(format!(
+                    "unexpected smask type {:?}",
+                    v
+                )))?,
             },
             b"Type" => match v {
                 Object::Name(ref name) => {
                     assert_eq!(name, b"ExtGState")
                 }
-                _ => {
-                    panic!("unexpected type")
-                }
+                _ => Err(PdfExtractError::Error("unexpected type".into()))?,
             },
             _ => {
                 trace!("unapplied state: {:?} {:?}", k, v);
             }
         }
     }
+
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -1635,15 +1640,19 @@ impl Path {
         Path { ops: Vec::new() }
     }
 
-    fn current_point(&self) -> (f64, f64) {
-        match self.ops.last().unwrap() {
+    fn current_point(&self) -> Result<(f64, f64)> {
+        let result = match self
+            .ops
+            .last()
+            .ok_or(PdfExtractError::Error("no current point".into()))?
+        {
             PathOp::MoveTo(x, y) => (*x, *y),
             PathOp::LineTo(x, y) => (*x, *y),
             PathOp::CurveTo(_, _, _, _, x, y) => (*x, *y),
-            _ => {
-                panic!()
-            }
-        }
+            _ => Err(PdfExtractError::Error("unknown point".into()))?,
+        };
+
+        Ok(result)
     }
 }
 
@@ -1712,15 +1721,23 @@ fn make_colorspace<'a>(
         b"Pattern" => ColorSpace::Pattern,
         _ => {
             let colorspaces: &Dictionary = get(doc, resources, b"ColorSpace")?;
-            let cs: &Object = maybe_get_obj(doc, colorspaces, name)
-                .unwrap_or_else(|| panic!("missing colorspace {:?}", name));
+            let cs: &Object = maybe_get_obj(doc, colorspaces, name).ok_or(
+                PdfExtractError::Error(format!("missing colorspace {:?}", name)),
+            )?;
 
             if let Ok(cs) = cs.as_array() {
-                let cs_name = pdf_to_utf8(cs[0].as_name().expect("first arg must be a name"));
+                let cs_name = pdf_to_utf8(
+                    cs[0]
+                        .as_name()
+                        .map_err(|_| PdfExtractError::Error("first arg must be a name".into()))?,
+                );
 
                 match cs_name.as_ref() {
                     "Separation" => {
-                        let name = pdf_to_utf8(cs[1].as_name().expect("second arg must be a name"));
+                        let name = pdf_to_utf8(cs[1].as_name().map_err(|_| {
+                            PdfExtractError::Error("second arg must be a name".into())
+                        })?);
+
                         let alternate_space = match &maybe_deref(doc, &cs[2]) {
                             Object::Name(name) => match &name[..] {
                                 b"DeviceGray" => AlternateColorSpace::DeviceGray,
@@ -2032,9 +2049,10 @@ impl Processor {
                     Object::String(ref s, _) => {
                         show_text(&mut gs, s, &tlm, &flip_ctm, output)?;
                     }
-                    _ => {
-                        panic!("unexpected Tj operand {:?}", operation)
-                    }
+                    _ => Err(PdfExtractError::Error(format!(
+                        "unexpected Tj operand {:?}",
+                        operation
+                    )))?,
                 },
                 "Tc" => {
                     gs.ts.character_spacing = as_num(&operation.operands[0]);
@@ -2174,7 +2192,7 @@ impl Processor {
                     let name = operation.operands[0].as_name()?;
                     let state: &Dictionary = get(doc, ext_gstate, name)?;
 
-                    apply_state(doc, &mut gs, state);
+                    apply_state(doc, &mut gs, state)?;
                 }
                 "i" => {
                     trace!(
@@ -2205,7 +2223,8 @@ impl Processor {
                     as_num(&operation.operands[5]),
                 )),
                 "v" => {
-                    let (x, y) = path.current_point();
+                    let (x, y) = path.current_point()?;
+
                     path.ops.push(PathOp::CurveTo(
                         x,
                         y,
