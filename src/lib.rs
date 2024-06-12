@@ -163,7 +163,9 @@ fn maybe_get_obj<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Opt
 
 // an intermediate trait that can be used to chain conversions that may have failed
 trait FromOptObj<'a> {
-    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &[u8]) -> Result<Self>;
+    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &[u8]) -> Result<Self>
+    where
+        Self: Sized;
 }
 
 // conditionally convert to Self returns None if the conversion failed
@@ -403,7 +405,7 @@ impl<'a> PdfSimpleFont<'a> {
         let base_name = get_name_string(doc, font, b"BaseFont")?;
         let subtype = get_name_string(doc, font, b"Subtype")?;
 
-        let encoding: Option<&Object> = get(doc, font, b"Encoding");
+        let encoding: Option<&Object> = get(doc, font, b"Encoding")?;
 
         trace!(
             "base_name {} {} enc:{:?} {:?}",
@@ -413,7 +415,7 @@ impl<'a> PdfSimpleFont<'a> {
             font
         );
 
-        let descriptor: Option<&Dictionary> = get(doc, font, b"FontDescriptor");
+        let descriptor: Option<&Dictionary> = get(doc, font, b"FontDescriptor")?;
         let mut type1_encoding = None;
 
         if let Some(descriptor) = descriptor {
@@ -449,7 +451,7 @@ impl<'a> PdfSimpleFont<'a> {
                 }
             }
 
-            let font_file3 = get::<Option<&Object>>(doc, descriptor, b"FontFile3");
+            let font_file3 = get::<Option<&Object>>(doc, descriptor, b"FontFile3")?;
 
             match font_file3 {
                 Some(Object::Stream(ref s)) => {
@@ -731,7 +733,7 @@ impl<'a> PdfSimpleFont<'a> {
             Err(PdfExtractError::Error("no widths".into()))?
         }
 
-        let missing_width = get::<Option<f64>>(doc, font, b"MissingWidth").unwrap_or(0.);
+        let missing_width = get::<Option<f64>>(doc, font, b"MissingWidth")?.unwrap_or(0.);
 
         Ok(PdfSimpleFont {
             doc,
@@ -779,7 +781,7 @@ impl<'a> PdfSimpleFont<'a> {
 impl<'a> PdfType3Font<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> Result<PdfType3Font<'a>> {
         let unicode_map = get_unicode_map(doc, font);
-        let encoding: Option<&Object> = get(doc, font, b"Encoding");
+        let encoding: Option<&Object> = get(doc, font, b"Encoding")?;
 
         let encoding_table = match encoding {
             Some(Object::Name(ref encoding_name)) => {
@@ -847,9 +849,9 @@ impl<'a> PdfType3Font<'a> {
             _ => Err(PdfExtractError::Error("wrong encoding".into()))?,
         };
 
-        let first_char: i64 = get(doc, font, b"FirstChar");
-        let last_char: i64 = get(doc, font, b"LastChar");
-        let widths: Vec<f64> = get(doc, font, b"Widths");
+        let first_char: i64 = get(doc, font, b"FirstChar")?;
+        let last_char: i64 = get(doc, font, b"LastChar")?;
+        let widths: Vec<f64> = get(doc, font, b"Widths")?;
 
         let mut width_map = HashMap::new();
         let mut i = 0;
@@ -1204,8 +1206,8 @@ impl<'a> PdfCIDFont<'a> {
         let _f = font_dict
             .as_dict()
             .map_err(|_| PdfExtractError::Error("must be dict".into()))?;
-        let default_width = get::<Option<i64>>(doc, ciddict, b"DW").unwrap_or(1000);
-        let w: Option<Vec<&Object>> = get(doc, ciddict, b"W");
+        let default_width = get::<Option<i64>>(doc, ciddict, b"DW")?.unwrap_or(1000);
+        let w: Option<Vec<&Object>> = get(doc, ciddict, b"W")?;
 
         trace!("widths {:?}", w);
 
@@ -1391,14 +1393,14 @@ enum Function {
 }
 
 impl Function {
-    fn new(doc: &Document, obj: &Object) -> Function {
+    fn new(doc: &Document, obj: &Object) -> Result<Function> {
         let dict = match obj {
             Object::Dictionary(ref dict) => dict,
             Object::Stream(ref stream) => &stream.dict,
             _ => panic!(),
         };
 
-        let function_type: i64 = get(doc, dict, b"FunctionType");
+        let function_type: i64 = get(doc, dict, b"FunctionType")?;
 
         match function_type {
             0 => {
@@ -1407,14 +1409,14 @@ impl Function {
                     _ => panic!(),
                 };
 
-                let range: Vec<f64> = get(doc, dict, b"Range");
-                let domain: Vec<f64> = get(doc, dict, b"Domain");
+                let range: Vec<f64> = get(doc, dict, b"Range")?;
+                let domain: Vec<f64> = get(doc, dict, b"Domain")?;
                 let contents = get_contents(stream);
-                let size: Vec<i64> = get(doc, dict, b"Size");
-                let bits_per_sample = get(doc, dict, b"BitsPerSample");
+                let size: Vec<i64> = get(doc, dict, b"Size")?;
+                let bits_per_sample = get(doc, dict, b"BitsPerSample")?;
                 // We ignore 'Order' like pdfium, poppler and pdf.js
 
-                let encode = get::<Option<Vec<f64>>>(doc, dict, b"Encode");
+                let encode = get::<Option<Vec<f64>>>(doc, dict, b"Encode")?;
 
                 // maybe there's some better way to write this.
                 let encode = encode.unwrap_or_else(|| {
@@ -1428,9 +1430,9 @@ impl Function {
                 });
 
                 let decode =
-                    get::<Option<Vec<f64>>>(doc, dict, b"Decode").unwrap_or_else(|| range.clone());
+                    get::<Option<Vec<f64>>>(doc, dict, b"Decode")?.unwrap_or_else(|| range.clone());
 
-                Function::Type0(Type0Func {
+                Ok(Function::Type0(Type0Func {
                     domain,
                     range,
                     size,
@@ -1438,13 +1440,14 @@ impl Function {
                     bits_per_sample,
                     encode,
                     decode,
-                })
+                }))
             }
             2 => {
-                let c0 = get::<Option<Vec<f64>>>(doc, dict, b"C0");
-                let c1 = get::<Option<Vec<f64>>>(doc, dict, b"C1");
-                let n = get::<f64>(doc, dict, b"N");
-                Function::Type2(Type2Func { c0, c1, n })
+                let c0 = get::<Option<Vec<f64>>>(doc, dict, b"C0")?;
+                let c1 = get::<Option<Vec<f64>>>(doc, dict, b"C1")?;
+                let n = get::<f64>(doc, dict, b"N")?;
+
+                Ok(Function::Type2(Type2Func { c0, c1, n }))
             }
             _ => {
                 panic!("unhandled function type {}", function_type)
@@ -1708,7 +1711,7 @@ fn make_colorspace<'a>(
         b"DeviceCMYK" => ColorSpace::DeviceCMYK,
         b"Pattern" => ColorSpace::Pattern,
         _ => {
-            let colorspaces: &Dictionary = get(doc, resources, b"ColorSpace");
+            let colorspaces: &Dictionary = get(doc, resources, b"ColorSpace")?;
             let cs: &Object = maybe_get_obj(doc, colorspaces, name)
                 .unwrap_or_else(|| panic!("missing colorspace {:?}", name));
 
@@ -1749,9 +1752,9 @@ fn make_colorspace<'a>(
                                         })?;
 
                                         AlternateColorSpace::CalGray(CalGray {
-                                            white_point: get(doc, dict, b"WhitePoint"),
-                                            black_point: get(doc, dict, b"BackPoint"),
-                                            gamma: get(doc, dict, b"Gamma"),
+                                            white_point: get(doc, dict, b"WhitePoint")?,
+                                            black_point: get(doc, dict, b"BackPoint")?,
+                                            gamma: get(doc, dict, b"Gamma")?,
                                         })
                                     }
                                     "CalRGB" => {
@@ -1762,10 +1765,10 @@ fn make_colorspace<'a>(
                                         })?;
 
                                         AlternateColorSpace::CalRGB(CalRGB {
-                                            white_point: get(doc, dict, b"WhitePoint"),
-                                            black_point: get(doc, dict, b"BackPoint"),
-                                            gamma: get(doc, dict, b"Gamma"),
-                                            matrix: get(doc, dict, b"Matrix"),
+                                            white_point: get(doc, dict, b"WhitePoint")?,
+                                            black_point: get(doc, dict, b"BackPoint")?,
+                                            gamma: get(doc, dict, b"Gamma")?,
+                                            matrix: get(doc, dict, b"Matrix")?,
                                         })
                                     }
                                     "Lab" => {
@@ -1776,9 +1779,9 @@ fn make_colorspace<'a>(
                                         })?;
 
                                         AlternateColorSpace::Lab(Lab {
-                                            white_point: get(doc, dict, b"WhitePoint"),
-                                            black_point: get(doc, dict, b"BackPoint"),
-                                            range: get(doc, dict, b"Range"),
+                                            white_point: get(doc, dict, b"WhitePoint")?,
+                                            black_point: get(doc, dict, b"BackPoint")?,
+                                            range: get(doc, dict, b"Range")?,
                                         })
                                     }
                                     _ => Err(PdfExtractError::Error(format!(
@@ -1792,7 +1795,8 @@ fn make_colorspace<'a>(
                             )))?,
                         };
 
-                        let tint_transform = Box::new(Function::new(doc, maybe_deref(doc, &cs[3])));
+                        let tint_transform =
+                            Box::new(Function::new(doc, maybe_deref(doc, &cs[3]))?);
 
                         trace!("{:?} {:?} {:?}", name, alternate_space, tint_transform);
 
@@ -1816,9 +1820,9 @@ fn make_colorspace<'a>(
                         })?;
 
                         ColorSpace::CalGray(CalGray {
-                            white_point: get(doc, dict, b"WhitePoint"),
-                            black_point: get(doc, dict, b"BackPoint"),
-                            gamma: get(doc, dict, b"Gamma"),
+                            white_point: get(doc, dict, b"WhitePoint")?,
+                            black_point: get(doc, dict, b"BackPoint")?,
+                            gamma: get(doc, dict, b"Gamma")?,
                         })
                     }
                     "CalRGB" => {
@@ -1827,10 +1831,10 @@ fn make_colorspace<'a>(
                         })?;
 
                         ColorSpace::CalRGB(CalRGB {
-                            white_point: get(doc, dict, b"WhitePoint"),
-                            black_point: get(doc, dict, b"BackPoint"),
-                            gamma: get(doc, dict, b"Gamma"),
-                            matrix: get(doc, dict, b"Matrix"),
+                            white_point: get(doc, dict, b"WhitePoint")?,
+                            black_point: get(doc, dict, b"BackPoint")?,
+                            gamma: get(doc, dict, b"Gamma")?,
+                            matrix: get(doc, dict, b"Matrix")?,
                         })
                     }
                     "Lab" => {
@@ -1839,9 +1843,9 @@ fn make_colorspace<'a>(
                         })?;
 
                         ColorSpace::Lab(Lab {
-                            white_point: get(doc, dict, b"WhitePoint"),
-                            black_point: get(doc, dict, b"BackPoint"),
-                            range: get(doc, dict, b"Range"),
+                            white_point: get(doc, dict, b"WhitePoint")?,
+                            black_point: get(doc, dict, b"BackPoint")?,
+                            range: get(doc, dict, b"Range")?,
                         })
                     }
                     "Pattern" => ColorSpace::Pattern,
@@ -2045,7 +2049,7 @@ impl Processor {
                     gs.ts.leading = as_num(&operation.operands[0]);
                 }
                 "Tf" => {
-                    let fonts: &Dictionary = get(doc, resources, b"Font");
+                    let fonts: &Dictionary = get(doc, resources, b"Font")?;
                     let name =
                         String::from_utf8_lossy(operation.operands[0].as_name()?).to_string();
 
@@ -2053,7 +2057,7 @@ impl Processor {
                         Some(value) => value.to_owned(),
                         None => {
                             let font =
-                                make_font(doc, get::<&Dictionary>(doc, fonts, name.as_bytes()))?;
+                                make_font(doc, get::<&Dictionary>(doc, fonts, name.as_bytes())?)?;
 
                             font_table.insert(name.to_string(), font.clone());
 
@@ -2166,9 +2170,9 @@ impl Processor {
                     }
                 }
                 "gs" => {
-                    let ext_gstate: &Dictionary = get(doc, resources, b"ExtGState");
+                    let ext_gstate: &Dictionary = get(doc, resources, b"ExtGState")?;
                     let name = operation.operands[0].as_name()?;
-                    let state: &Dictionary = get(doc, ext_gstate, name);
+                    let state: &Dictionary = get(doc, ext_gstate, name)?;
 
                     apply_state(doc, &mut gs, state);
                 }
@@ -2254,9 +2258,9 @@ impl Processor {
                 "Do" => {
                     // `Do` process an entire subdocument, so we do a recursive call to `process_stream`
                     // with the subdocument content and resources
-                    let xobject: &Dictionary = get(doc, resources, b"XObject");
+                    let xobject: &Dictionary = get(doc, resources, b"XObject")?;
                     let name = operation.operands[0].as_name()?;
-                    let xf: &Stream = get(doc, xobject, name);
+                    let xf: &Stream = get(doc, xobject, name)?;
                     let resources = maybe_get_obj(doc, &xf.dict, b"Resources")
                         .and_then(|n| n.as_dict().ok())
                         .unwrap_or(resources);
@@ -2782,7 +2786,10 @@ pub fn print_metadata(doc: &Document) -> Result<()> {
         }
     }
 
-    trace!("Page count: {}", get::<i64>(doc, get_pages(doc)?, b"Count"));
+    trace!(
+        "Page count: {}",
+        get::<i64>(doc, get_pages(doc)?, b"Count")?
+    );
 
     trace!("Pages: {:?}", get_pages(doc));
 
@@ -2873,17 +2880,18 @@ fn get_inherited<'a, T: FromObj<'a>>(
     doc: &'a Document,
     dict: &'a Dictionary,
     key: &[u8],
-) -> Option<T> {
-    let o: Option<T> = get(doc, dict, key);
+) -> Result<Option<T>> {
+    let o: Option<T> = get(doc, dict, key)?;
 
     if let Some(o) = o {
-        Some(o)
+        Ok(Some(o))
     } else {
         let parent = dict
             .get(b"Parent")
             .and_then(|parent| parent.as_reference())
             .and_then(|id| doc.get_dictionary(id))
-            .ok()?;
+            .ok()
+            .ok_or(PdfExtractError::Error("no parent found".to_string()))?;
 
         get_inherited(doc, parent, key)
     }
@@ -2917,12 +2925,14 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<()> {
         debug!("page {} {:?}", page_num, page_dict);
 
         // XXX: Some pdfs lack a Resources directory
-        let resources = get_inherited(doc, page_dict, b"Resources").unwrap_or(empty_resources);
+        let resources = get_inherited(doc, page_dict, b"Resources")?.unwrap_or(empty_resources);
 
         debug!("resources {:?}", resources);
 
         // pdfium searches up the page tree for MediaBoxes as needed
-        let media_box: Vec<f64> = get_inherited(doc, page_dict, b"MediaBox").expect("MediaBox");
+        let media_box: Vec<f64> = get_inherited(doc, page_dict, b"MediaBox")?
+            .ok_or(PdfExtractError::Error("MediaBox".into()))?;
+
         let media_box = MediaBox {
             llx: media_box[0],
             lly: media_box[1],
@@ -2931,7 +2941,7 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<()> {
         };
 
         let art_box =
-            get::<Option<Vec<f64>>>(doc, page_dict, b"ArtBox").map(|x| (x[0], x[1], x[2], x[3]));
+            get::<Option<Vec<f64>>>(doc, page_dict, b"ArtBox")?.map(|x| (x[0], x[1], x[2], x[3]));
 
         output.begin_page(page_num, &media_box, art_box)?;
 
