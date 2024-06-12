@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use adobe_cmap_parser::{ByteMapping, CIDRange, CodeRange};
+use anyhow::{Context, Result};
 use encoding::all::UTF_16BE;
 use encoding::{DecoderTrap, Encoding};
 use euclid::vec2;
@@ -10,15 +11,16 @@ use lopdf::*;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
+use std::fmt::Debug;
 use std::fmt::Write;
-use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::rc::Rc;
-use std::result::Result;
 use std::slice::Iter;
 use std::str;
+use thiserror::Error;
 use tracing::{debug, error, trace};
 use unicode_normalization::UnicodeNormalization;
+
 mod core_fonts;
 mod encodings;
 mod glyphnames;
@@ -27,45 +29,20 @@ mod zapfglyphnames;
 pub struct Space;
 pub type Transform = Transform2D<f64, Space, Space>;
 
-#[derive(Debug)]
-pub enum OutputError {
-    FormatError(std::fmt::Error),
-    IoError(std::io::Error),
-    PdfError(lopdf::Error),
+#[derive(Error, Debug)]
+pub enum PdfExtractError {
+    #[error(transparent)]
+    FormatError(#[from] std::fmt::Error),
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+    #[error(transparent)]
+    PdfError(#[from] lopdf::Error),
+
+    #[error("file is encrypted")]
     Encrypted,
+
+    #[error("{0}")]
     Error(String),
-}
-
-impl std::fmt::Display for OutputError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self {
-            OutputError::FormatError(e) => write!(f, "Formating error: {}", e),
-            OutputError::IoError(e) => write!(f, "IO error: {}", e),
-            OutputError::PdfError(e) => write!(f, "PDF error: {}", e),
-            OutputError::Encrypted => write!(f, "encrypted"),
-            OutputError::Error(value) => write!(f, "pdf-extract error: {value}"),
-        }
-    }
-}
-
-impl std::error::Error for OutputError {}
-
-impl From<std::fmt::Error> for OutputError {
-    fn from(e: std::fmt::Error) -> Self {
-        OutputError::FormatError(e)
-    }
-}
-
-impl From<std::io::Error> for OutputError {
-    fn from(e: std::io::Error) -> Self {
-        OutputError::IoError(e)
-    }
-}
-
-impl From<lopdf::Error> for OutputError {
-    fn from(e: lopdf::Error) -> Self {
-        OutputError::PdfError(e)
-    }
 }
 
 fn get_info(doc: &Document) -> Option<&Dictionary> {
@@ -78,17 +55,17 @@ fn get_info(doc: &Document) -> Option<&Dictionary> {
     None
 }
 
-fn get_catalog(doc: &Document) -> Result<&Dictionary, OutputError> {
+fn get_catalog(doc: &Document) -> Result<&Dictionary> {
     if let Object::Reference(ref id) = doc.trailer.get(b"Root")? {
         if let Ok(Object::Dictionary(ref catalog)) = doc.get_object(*id) {
             return Ok(catalog);
         }
     }
 
-    Err(OutputError::Error("could not get catalog".into()))
+    Err(PdfExtractError::Error("could not get catalog".into()))?
 }
 
-fn get_pages(doc: &Document) -> Result<&Dictionary, OutputError> {
+fn get_pages(doc: &Document) -> Result<&Dictionary> {
     let catalog = get_catalog(doc)?;
 
     match catalog.get(b"Pages")? {
@@ -107,9 +84,9 @@ fn get_pages(doc: &Document) -> Result<&Dictionary, OutputError> {
 
     trace!("catalog {:?}", catalog);
 
-    Err(OutputError::Error(format!(
+    Err(PdfExtractError::Error(format!(
         "could not get catalog {catalog:?}"
-    )))
+    )))?
 }
 
 #[allow(non_upper_case_globals)]
@@ -359,16 +336,13 @@ struct PdfType3Font<'a> {
     widths: HashMap<CharCode, f64>, // should probably just use i32 here
 }
 
-fn make_font<'a>(
-    doc: &'a Document,
-    font: &'a Dictionary,
-) -> Result<Rc<dyn PdfFont + 'a>, OutputError> {
+fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Result<Rc<dyn PdfFont + 'a>> {
     let subtype = get_name_string(doc, font, b"Subtype");
 
     trace!("MakeFont({})", subtype);
 
     Ok(if subtype == "Type0" {
-        Rc::new(PdfCIDFont::new(doc, font))
+        Rc::new(PdfCIDFont::new(doc, font)?)
     } else if subtype == "Type3" {
         Rc::new(PdfType3Font::new(doc, font))
     } else {
@@ -1157,15 +1131,15 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
 }
 
 impl<'a> PdfCIDFont<'a> {
-    fn new(doc: &'a Document, font: &'a Dictionary) -> PdfCIDFont<'a> {
+    fn new(doc: &'a Document, font: &'a Dictionary) -> Result<PdfCIDFont<'a>> {
         let base_name = get_name_string(doc, font, b"BaseFont");
-        let descendants =
-            maybe_get_array(doc, font, b"DescendantFonts").expect("Descendant fonts required");
+        let descendants = maybe_get_array(doc, font, b"DescendantFonts")
+            .with_context(|| "Descendant fonts required")?;
         let ciddict = maybe_deref(doc, &descendants[0])
             .as_dict()
-            .expect("should be CID dict");
-        let encoding =
-            maybe_get_obj(doc, font, b"Encoding").expect("Encoding required in type0 fonts");
+            .with_context(|| "should be CID dict")?;
+        let encoding = maybe_get_obj(doc, font, b"Encoding")
+            .with_context(|| "Encoding required in type0 fonts")?;
 
         trace!("base_name {} {:?}", base_name, font);
 
@@ -1193,12 +1167,16 @@ impl<'a> PdfCIDFont<'a> {
             Object::Stream(ref stream) => {
                 let contents = get_contents(stream);
 
-                trace!("Stream: {}", String::from_utf8(contents.clone()).unwrap());
+                trace!("Stream: {}", String::from_utf8_lossy(&contents));
 
-                adobe_cmap_parser::get_byte_mapping(&contents).unwrap()
+                adobe_cmap_parser::get_byte_mapping(&contents)
+                    .map_err(|value| PdfExtractError::Error(value.to_string()))?
             }
             _ => {
-                panic!("unsupported encoding {:?}", encoding)
+                return Err(PdfExtractError::Error(format!(
+                    "unsupported encoding {:?}",
+                    encoding
+                )))?;
             }
         };
 
@@ -1211,11 +1189,13 @@ impl<'a> PdfCIDFont<'a> {
 
         trace!("descendents {:?} {:?}", descendants, ciddict);
 
-        let font_dict = maybe_get_obj(doc, ciddict, b"FontDescriptor").expect("required");
+        let Some(font_dict) = maybe_get_obj(doc, ciddict, b"FontDescriptor") else {
+            return Err(PdfExtractError::Error("FontDescriptor not found".into()))?;
+        };
 
         trace!("{:?}", font_dict);
 
-        let _f = font_dict.as_dict().expect("must be dict");
+        let _f = font_dict.as_dict().with_context(|| "must be dict")?;
         let default_width = get::<Option<i64>>(doc, ciddict, b"DW").unwrap_or(1000);
         let w: Option<Vec<&Object>> = get(doc, ciddict, b"W");
 
@@ -1251,14 +1231,15 @@ impl<'a> PdfCIDFont<'a> {
                 }
             }
         }
-        PdfCIDFont {
+
+        Ok(PdfCIDFont {
             doc,
             font,
             widths,
             to_unicode: unicode_map,
             encoding,
             default_width: Some(default_width as f64),
-        }
+        })
     }
 }
 
@@ -1514,7 +1495,7 @@ fn show_text(
     _tlm: &Transform,
     _flip_ctm: &Transform,
     output: &mut dyn OutputDev,
-) -> Result<(), OutputError> {
+) -> Result<()> {
     let ts = &mut gs.ts;
     let font = ts.font.as_ref().unwrap();
     //let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
@@ -1707,8 +1688,12 @@ pub enum ColorSpace {
     ICCBased(Vec<u8>),
 }
 
-fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary) -> ColorSpace {
-    match name {
+fn make_colorspace<'a>(
+    doc: &'a Document,
+    name: &[u8],
+    resources: &'a Dictionary,
+) -> Result<ColorSpace> {
+    let result = match name {
         b"DeviceGray" => ColorSpace::DeviceGray,
         b"DeviceRGB" => ColorSpace::DeviceRGB,
         b"DeviceCMYK" => ColorSpace::DeviceCMYK,
@@ -1729,14 +1714,20 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                                 b"DeviceGray" => AlternateColorSpace::DeviceGray,
                                 b"DeviceRGB" => AlternateColorSpace::DeviceRGB,
                                 b"DeviceCMYK" => AlternateColorSpace::DeviceCMYK,
-                                _ => panic!("unexpected color space name"),
+                                _ => Err(PdfExtractError::Error(format!(
+                                    "Unexpected color space name {name:?}",
+                                )))?,
                             },
                             Object::Array(cs) => {
-                                let cs_name =
-                                    pdf_to_utf8(cs[0].as_name().expect("first arg must be a name"));
+                                let cs_name = pdf_to_utf8(
+                                    cs[0]
+                                        .as_name()
+                                        .with_context(|| "first arg must be a name")?,
+                                );
+
                                 match cs_name.as_ref() {
                                     "ICCBased" => {
-                                        let stream = maybe_deref(doc, &cs[1]).as_stream().unwrap();
+                                        let stream = maybe_deref(doc, &cs[1]).as_stream()?;
 
                                         trace!("ICCBased {:?}", stream);
 
@@ -1744,8 +1735,10 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                                         AlternateColorSpace::ICCBased(get_contents(stream))
                                     }
                                     "CalGray" => {
-                                        let dict =
-                                            cs[1].as_dict().expect("second arg must be a dict");
+                                        let dict = cs[1]
+                                            .as_dict()
+                                            .with_context(|| "second arg must be a dict")?;
+
                                         AlternateColorSpace::CalGray(CalGray {
                                             white_point: get(doc, dict, b"WhitePoint"),
                                             black_point: get(doc, dict, b"BackPoint"),
@@ -1753,8 +1746,10 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                                         })
                                     }
                                     "CalRGB" => {
-                                        let dict =
-                                            cs[1].as_dict().expect("second arg must be a dict");
+                                        let dict = cs[1]
+                                            .as_dict()
+                                            .with_context(|| "second arg must be a dict")?;
+
                                         AlternateColorSpace::CalRGB(CalRGB {
                                             white_point: get(doc, dict, b"WhitePoint"),
                                             black_point: get(doc, dict, b"BackPoint"),
@@ -1763,18 +1758,25 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                                         })
                                     }
                                     "Lab" => {
-                                        let dict =
-                                            cs[1].as_dict().expect("second arg must be a dict");
+                                        let dict = cs[1]
+                                            .as_dict()
+                                            .with_context(|| "second arg must be a dict")?;
+
                                         AlternateColorSpace::Lab(Lab {
                                             white_point: get(doc, dict, b"WhitePoint"),
                                             black_point: get(doc, dict, b"BackPoint"),
                                             range: get(doc, dict, b"Range"),
                                         })
                                     }
-                                    _ => panic!("Unexpected color space name"),
+                                    _ => Err(PdfExtractError::Error(format!(
+                                        "Unexpected color space name {cs_name}",
+                                    )))?,
                                 }
                             }
-                            _ => panic!("Alternate space should be name or array {:?}", cs[2]),
+                            _ => Err(PdfExtractError::Error(format!(
+                                "Alternate space should be name or array {:?}",
+                                cs[2]
+                            )))?,
                         };
 
                         let tint_transform = Box::new(Function::new(doc, maybe_deref(doc, &cs[3])));
@@ -1788,7 +1790,7 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                         })
                     }
                     "ICCBased" => {
-                        let stream = maybe_deref(doc, &cs[1]).as_stream().unwrap();
+                        let stream = maybe_deref(doc, &cs[1]).as_stream()?;
 
                         trace!("ICCBased {:?}", stream);
 
@@ -1796,7 +1798,9 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                         ColorSpace::ICCBased(get_contents(stream))
                     }
                     "CalGray" => {
-                        let dict = cs[1].as_dict().expect("second arg must be a dict");
+                        let dict = cs[1]
+                            .as_dict()
+                            .with_context(|| "second arg must be a dict")?;
 
                         ColorSpace::CalGray(CalGray {
                             white_point: get(doc, dict, b"WhitePoint"),
@@ -1805,7 +1809,9 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                         })
                     }
                     "CalRGB" => {
-                        let dict = cs[1].as_dict().expect("second arg must be a dict");
+                        let dict = cs[1]
+                            .as_dict()
+                            .with_context(|| "second arg must be a dict")?;
 
                         ColorSpace::CalRGB(CalRGB {
                             white_point: get(doc, dict, b"WhitePoint"),
@@ -1815,7 +1821,9 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                         })
                     }
                     "Lab" => {
-                        let dict = cs[1].as_dict().expect("second arg must be a dict");
+                        let dict = cs[1]
+                            .as_dict()
+                            .with_context(|| "second arg must be a dict")?;
 
                         ColorSpace::Lab(Lab {
                             white_point: get(doc, dict, b"WhitePoint"),
@@ -1827,21 +1835,30 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                     "DeviceGray" => ColorSpace::DeviceGray,
                     "DeviceRGB" => ColorSpace::DeviceRGB,
                     "DeviceCMYK" => ColorSpace::DeviceCMYK,
-                    _ => {
-                        panic!("color_space {:?} {:?} {:?}", name, cs_name, cs)
-                    }
+                    _ => Err(PdfExtractError::Error(format!(
+                        "color_space {:?} {:?} {:?}",
+                        name, cs_name, cs
+                    )))?,
                 }
             } else if let Ok(cs) = cs.as_name() {
-                match pdf_to_utf8(cs).as_ref() {
+                let name = pdf_to_utf8(cs);
+
+                match name.as_ref() {
                     "DeviceRGB" => ColorSpace::DeviceRGB,
                     "DeviceGray" => ColorSpace::DeviceGray,
-                    _ => panic!(),
+                    _ => Err(PdfExtractError::Error(format!(
+                        "unknown color space device {name:?}"
+                    )))?,
                 }
             } else {
-                panic!();
+                Err(PdfExtractError::Error(format!(
+                    "unknown color space {name:?}"
+                )))?
             }
         }
-    }
+    };
+
+    Ok(result)
 }
 
 struct Processor {}
@@ -1854,10 +1871,10 @@ impl Processor {
         media_box: &MediaBox,
         output: &mut dyn OutputDev,
         _page_num: u32,
-    ) -> Result<(), OutputError> {
+    ) -> Result<()> {
         let content = Content::decode(&content)?;
 
-        let mut font_table = HashMap::new();
+        let mut font_table: HashMap<String, Rc<dyn PdfFont>> = HashMap::new();
 
         let mut gs: GraphicsState = GraphicsState {
             ts: TextState {
@@ -1905,7 +1922,7 @@ impl Processor {
                 }
                 "cm" => {
                     if operation.operands.len() != 6 {
-                        return Err(OutputError::Error("cm has wrong size".into()));
+                        return Err(PdfExtractError::Error("cm has wrong size".into()))?;
                     }
 
                     let m = Transform2D::row_major(
@@ -1924,12 +1941,12 @@ impl Processor {
                 "CS" => {
                     let name = operation.operands[0].as_name()?;
 
-                    gs.stroke_colorspace = make_colorspace(doc, name, resources);
+                    gs.stroke_colorspace = make_colorspace(doc, name, resources)?;
                 }
                 "cs" => {
                     let name = operation.operands[0].as_name()?;
 
-                    gs.fill_colorspace = make_colorspace(doc, name, resources);
+                    gs.fill_colorspace = make_colorspace(doc, name, resources)?;
                 }
                 "SC" | "SCN" => {
                     gs.stroke_color = match gs.stroke_colorspace {
@@ -2016,11 +2033,21 @@ impl Processor {
                 }
                 "Tf" => {
                     let fonts: &Dictionary = get(doc, resources, b"Font");
-                    let name = operation.operands[0].as_name()?;
-                    let font = font_table
-                        .entry(name.to_owned())
-                        .or_insert_with(|| make_font(doc, get::<&Dictionary>(doc, fonts, name))?)
-                        .clone();
+                    let name =
+                        String::from_utf8_lossy(operation.operands[0].as_name()?).to_string();
+
+                    let font: Rc<dyn PdfFont> = match font_table.get(&name) {
+                        Some(value) => value.to_owned(),
+                        None => {
+                            let font =
+                                make_font(doc, get::<&Dictionary>(doc, fonts, name.as_bytes()))?;
+
+                            font_table.insert(name.to_string(), font.clone());
+
+                            font
+                        }
+                    };
+
                     {
                         /*let file = font.get_descriptor().and_then(|desc| desc.get_file());
                         if let Some(file) = file {
@@ -2030,13 +2057,14 @@ impl Processor {
                             //trace!("font file: {:?}", f);
                         }*/
                     }
+
                     gs.ts.font = Some(font);
 
                     gs.ts.font_size = as_num(&operation.operands[1]);
 
                     trace!(
                         "font {} size: {} {:?}",
-                        pdf_to_utf8(name),
+                        pdf_to_utf8(name.as_bytes()),
                         gs.ts.font_size,
                         operation
                     );
@@ -2240,9 +2268,9 @@ pub trait OutputDev {
         page_num: u32,
         media_box: &MediaBox,
         art_box: Option<(f64, f64, f64, f64)>,
-    ) -> Result<(), OutputError>;
+    ) -> Result<()>;
 
-    fn end_page(&mut self) -> Result<(), OutputError>;
+    fn end_page(&mut self) -> Result<()>;
 
     fn output_character(
         &mut self,
@@ -2251,13 +2279,13 @@ pub trait OutputDev {
         spacing: f64,
         font_size: f64,
         char: &str,
-    ) -> Result<(), OutputError>;
+    ) -> Result<()>;
 
-    fn begin_word(&mut self) -> Result<(), OutputError>;
+    fn begin_word(&mut self) -> Result<()>;
 
-    fn end_word(&mut self) -> Result<(), OutputError>;
+    fn end_word(&mut self) -> Result<()>;
 
-    fn end_line(&mut self) -> Result<(), OutputError>;
+    fn end_line(&mut self) -> Result<()>;
 
     fn stroke(
         &mut self,
@@ -2265,7 +2293,7 @@ pub trait OutputDev {
         _colorspace: &ColorSpace,
         _color: &[f64],
         _path: &Path,
-    ) -> Result<(), OutputError> {
+    ) -> Result<()> {
         Ok(())
     }
 
@@ -2275,7 +2303,7 @@ pub trait OutputDev {
         _colorspace: &ColorSpace,
         _color: &[f64],
         _path: &Path,
-    ) -> Result<(), OutputError> {
+    ) -> Result<()> {
         Ok(())
     }
 }
@@ -2308,6 +2336,7 @@ fn insert_nbsp(input: &str) -> String {
             result.push(c);
         }
     }
+
     result
 }
 
@@ -2323,7 +2352,7 @@ impl<'a> HTMLOutput<'a> {
         }
     }
 
-    fn flush_string(&mut self) -> Result<(), OutputError> {
+    fn flush_string(&mut self) -> Result<()> {
         if !self.buf.is_empty() {
             let position = self.buf_ctm.post_transform(&self.flip_ctm);
             let transformed_font_size_vec = self
@@ -2354,12 +2383,7 @@ impl<'a> HTMLOutput<'a> {
 type ArtBox = (f64, f64, f64, f64);
 
 impl<'a> OutputDev for HTMLOutput<'a> {
-    fn begin_page(
-        &mut self,
-        page_num: u32,
-        media_box: &MediaBox,
-        _: Option<ArtBox>,
-    ) -> Result<(), OutputError> {
+    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, _: Option<ArtBox>) -> Result<()> {
         write!(self.file, "<meta charset='utf-8' /> ")?;
         write!(self.file, "<!-- page {} -->", page_num)?;
         write!(self.file, "<div id='page{}' style='position: relative; height: {}px; width: {}px; border: 1px black solid'>", page_num, media_box.ury - media_box.lly, media_box.urx - media_box.llx)?;
@@ -2369,7 +2393,7 @@ impl<'a> OutputDev for HTMLOutput<'a> {
         Ok(())
     }
 
-    fn end_page(&mut self) -> Result<(), OutputError> {
+    fn end_page(&mut self) -> Result<()> {
         self.flush_string()?;
         self.buf = String::new();
         self.last_ctm = Transform::identity();
@@ -2386,7 +2410,7 @@ impl<'a> OutputDev for HTMLOutput<'a> {
         spacing: f64,
         font_size: f64,
         char: &str,
-    ) -> Result<(), OutputError> {
+    ) -> Result<()> {
         if trm.approx_eq(&self.last_ctm) {
             let position = trm.post_transform(&self.flip_ctm);
             let (x, y) = (position.m31, position.m32);
@@ -2432,15 +2456,15 @@ impl<'a> OutputDev for HTMLOutput<'a> {
         Ok(())
     }
 
-    fn begin_word(&mut self) -> Result<(), OutputError> {
+    fn begin_word(&mut self) -> Result<()> {
         Ok(())
     }
 
-    fn end_word(&mut self) -> Result<(), OutputError> {
+    fn end_word(&mut self) -> Result<()> {
         Ok(())
     }
 
-    fn end_line(&mut self) -> Result<(), OutputError> {
+    fn end_line(&mut self) -> Result<()> {
         Ok(())
     }
 }
@@ -2461,7 +2485,7 @@ impl<'a> OutputDev for SVGOutput<'a> {
         _page_num: u32,
         media_box: &MediaBox,
         art_box: Option<(f64, f64, f64, f64)>,
-    ) -> Result<(), OutputError> {
+    ) -> Result<()> {
         let ver = 1.1;
 
         writeln!(self.file, "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>")?;
@@ -2506,7 +2530,7 @@ impl<'a> OutputDev for SVGOutput<'a> {
         Ok(())
     }
 
-    fn end_page(&mut self) -> Result<(), OutputError> {
+    fn end_page(&mut self) -> Result<()> {
         writeln!(self.file, "</g>")?;
         write!(self.file, "</svg>")?;
 
@@ -2520,19 +2544,19 @@ impl<'a> OutputDev for SVGOutput<'a> {
         _spacing: f64,
         _font_size: f64,
         _char: &str,
-    ) -> Result<(), OutputError> {
+    ) -> Result<()> {
         Ok(())
     }
 
-    fn begin_word(&mut self) -> Result<(), OutputError> {
+    fn begin_word(&mut self) -> Result<()> {
         Ok(())
     }
 
-    fn end_word(&mut self) -> Result<(), OutputError> {
+    fn end_word(&mut self) -> Result<()> {
         Ok(())
     }
 
-    fn end_line(&mut self) -> Result<(), OutputError> {
+    fn end_line(&mut self) -> Result<()> {
         Ok(())
     }
 
@@ -2542,7 +2566,7 @@ impl<'a> OutputDev for SVGOutput<'a> {
         _colorspace: &ColorSpace,
         _color: &[f64],
         path: &Path,
-    ) -> Result<(), OutputError> {
+    ) -> Result<()> {
         write!(
             self.file,
             "<g transform='matrix({}, {}, {}, {}, {}, {})'>",
@@ -2659,13 +2683,13 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
         _page_num: u32,
         media_box: &MediaBox,
         _: Option<ArtBox>,
-    ) -> Result<(), OutputError> {
+    ) -> Result<()> {
         self.flip_ctm = Transform2D::row_major(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
 
         Ok(())
     }
 
-    fn end_page(&mut self) -> Result<(), OutputError> {
+    fn end_page(&mut self) -> Result<()> {
         Ok(())
     }
 
@@ -2676,7 +2700,7 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
         _spacing: f64,
         font_size: f64,
         char: &str,
-    ) -> Result<(), OutputError> {
+    ) -> Result<()> {
         let position = trm.post_transform(&self.flip_ctm);
         let transformed_font_size_vec = trm.transform_vector(vec2(font_size, font_size));
 
@@ -2718,23 +2742,23 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
         Ok(())
     }
 
-    fn begin_word(&mut self) -> Result<(), OutputError> {
+    fn begin_word(&mut self) -> Result<()> {
         self.first_char = true;
         Ok(())
     }
 
-    fn end_word(&mut self) -> Result<(), OutputError> {
+    fn end_word(&mut self) -> Result<()> {
         Ok(())
     }
 
-    fn end_line(&mut self) -> Result<(), OutputError> {
+    fn end_line(&mut self) -> Result<()> {
         //write!(self.file, "\n");
 
         Ok(())
     }
 }
 
-pub fn print_metadata(doc: &Document) -> Result<(), OutputError> {
+pub fn print_metadata(doc: &Document) -> Result<()> {
     trace!("Version: {}", doc.version);
 
     if let Some(info) = get_info(doc) {
@@ -2758,9 +2782,7 @@ pub fn print_metadata(doc: &Document) -> Result<(), OutputError> {
 }
 
 /// Extract the text from a pdf at `path` and return a `String` with the results
-pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(
-    path: P,
-) -> Result<String, OutputError> {
+pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<String> {
     let mut s = String::new();
 
     {
@@ -2775,7 +2797,7 @@ pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(
     Ok(s)
 }
 
-fn maybe_decrypt(doc: &mut Document) -> Result<(), OutputError> {
+fn maybe_decrypt(doc: &mut Document) -> Result<()> {
     if !doc.is_encrypted() {
         return Ok(());
     }
@@ -2785,7 +2807,7 @@ fn maybe_decrypt(doc: &mut Document) -> Result<(), OutputError> {
             error!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted")
         }
 
-        return Err(OutputError::PdfError(e));
+        return Err(PdfExtractError::PdfError(e).into());
     }
 
     Ok(())
@@ -2794,7 +2816,7 @@ fn maybe_decrypt(doc: &mut Document) -> Result<(), OutputError> {
 pub fn extract_text_encrypted<P: std::convert::AsRef<std::path::Path>, PW: AsRef<[u8]>>(
     path: P,
     password: PW,
-) -> Result<String, OutputError> {
+) -> Result<String> {
     let mut s = String::new();
     {
         let mut output = PlainTextOutput::new(&mut s);
@@ -2805,7 +2827,7 @@ pub fn extract_text_encrypted<P: std::convert::AsRef<std::path::Path>, PW: AsRef
     Ok(s)
 }
 
-pub fn extract_text_from_mem(buffer: &[u8]) -> Result<String, OutputError> {
+pub fn extract_text_from_mem(buffer: &[u8]) -> Result<String> {
     let mut s = String::new();
 
     {
@@ -2823,11 +2845,12 @@ pub fn extract_text_from_mem(buffer: &[u8]) -> Result<String, OutputError> {
 pub fn extract_text_from_mem_encrypted<PW: AsRef<[u8]>>(
     buffer: &[u8],
     password: PW,
-) -> Result<String, OutputError> {
+) -> Result<String> {
     let mut s = String::new();
     {
         let mut output = PlainTextOutput::new(&mut s);
         let mut doc = Document::load_mem(buffer)?;
+
         output_doc_encrypted(&mut doc, &mut output, password)?;
     }
     Ok(s)
@@ -2857,18 +2880,18 @@ pub fn output_doc_encrypted<PW: AsRef<[u8]>>(
     doc: &mut Document,
     output: &mut dyn OutputDev,
     password: PW,
-) -> Result<(), OutputError> {
+) -> Result<()> {
     doc.decrypt(password)?;
 
     output_doc(doc, output)
 }
 
 /// Parse a given document and output it to `output`
-pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), OutputError> {
+pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<()> {
     if doc.is_encrypted() {
         error!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
 
-        return Err(OutputError::Encrypted);
+        return Err(PdfExtractError::Encrypted.into());
     }
 
     let empty_resources = &Dictionary::new();
