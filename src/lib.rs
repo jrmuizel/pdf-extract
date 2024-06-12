@@ -17,7 +17,7 @@ use std::rc::Rc;
 use std::result::Result;
 use std::slice::Iter;
 use std::str;
-use tracing::{error, trace};
+use tracing::{debug, error, trace};
 use unicode_normalization::UnicodeNormalization;
 mod core_fonts;
 mod encodings;
@@ -2863,7 +2863,7 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), Outp
         let page_num = dict.0;
         let page_dict = doc.get_object(dict.1).unwrap().as_dict().unwrap();
 
-        trace!("page {} {:?}", page_num, page_dict);
+        debug!("page {} {:?}", page_num, page_dict);
 
         // XXX: Some pdfs lack a Resources directory
         let resources = get_inherited(doc, page_dict, b"Resources").unwrap_or(empty_resources);
