@@ -163,7 +163,7 @@ fn maybe_get_obj<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Opt
 
 // an intermediate trait that can be used to chain conversions that may have failed
 trait FromOptObj<'a> {
-    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &[u8]) -> Self;
+    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &[u8]) -> Result<Self>;
 }
 
 // conditionally convert to Self returns None if the conversion failed
@@ -175,18 +175,18 @@ where
 }
 
 impl<'a, T: FromObj<'a>> FromOptObj<'a> for Option<T> {
-    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, _key: &[u8]) -> Self {
-        obj.and_then(|x| T::from_obj(doc, x))
+    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, _key: &[u8]) -> Result<Self> {
+        Ok(obj.and_then(|x| T::from_obj(doc, x)))
     }
 }
 
 impl<'a, T: FromObj<'a>> FromOptObj<'a> for T {
-    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &[u8]) -> Self {
+    fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &[u8]) -> Result<Self> {
         T::from_obj(
             doc,
             obj.unwrap_or_else(|| panic!("{}", String::from_utf8_lossy(key).to_string())),
         )
-        .expect("wrong type")
+        .ok_or(PdfExtractError::Error("wrong type".into()).into())
     }
 }
 
@@ -277,7 +277,7 @@ impl<'a> FromObj<'a> for &'a Object {
     }
 }
 
-fn get<'a, T: FromOptObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> T {
+fn get<'a, T: FromOptObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Result<T> {
     T::from_opt_obj(doc, dict.get(key).ok(), key)
 }
 
@@ -616,9 +616,8 @@ impl<'a> PdfSimpleFont<'a> {
                             .iter()
                             .map(|x| {
                                 if let &Some(x) = x {
-                                    glyphnames::name_to_unicode(x).ok_or(anyhow::anyhow!(
-                                        PdfExtractError::Error("no value".into())
-                                    ))
+                                    glyphnames::name_to_unicode(x)
+                                        .ok_or(PdfExtractError::Error("no value".into()).into())
                                 } else {
                                     Ok(0)
                                 }
@@ -672,9 +671,8 @@ impl<'a> PdfSimpleFont<'a> {
                         trace!("has encoding");
 
                         for w in font_metrics.2 {
-                            let c = glyphnames::name_to_unicode(w.2).ok_or(anyhow::anyhow!(
-                                PdfExtractError::Error("name to unicode failed".into())
-                            ))?;
+                            let c = glyphnames::name_to_unicode(w.2)
+                                .ok_or(PdfExtractError::Error("name to unicode failed".into()))?;
 
                             (0..encoding.len()).for_each(|i| {
                                 if encoding[i] == c {
@@ -696,14 +694,14 @@ impl<'a> PdfSimpleFont<'a> {
                             if w.0 != -1 {
                                 table[w.0 as usize] = if base_name == "ZapfDingbats" {
                                     zapfglyphnames::zapfdigbats_names_to_unicode(w.2).ok_or(
-                                        anyhow::anyhow!(PdfExtractError::Error(
-                                            "zapfdigbats names to unicode failed".into()
-                                        )),
+                                        PdfExtractError::Error(
+                                            "zapfdigbats names to unicode failed".into(),
+                                        ),
                                     )?
                                 } else {
-                                    glyphnames::name_to_unicode(w.2).ok_or(anyhow::anyhow!(
-                                        PdfExtractError::Error("name to unicode failed".into())
-                                    ))?
+                                    glyphnames::name_to_unicode(w.2).ok_or(
+                                        PdfExtractError::Error("name to unicode failed".into()),
+                                    )?
                                 }
                             }
                         }
@@ -1140,14 +1138,13 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
 impl<'a> PdfCIDFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> Result<PdfCIDFont<'a>> {
         let base_name = get_name_string(doc, font, b"BaseFont")?;
-        let descendants = maybe_get_array(doc, font, b"DescendantFonts").ok_or(anyhow::anyhow!(
-            PdfExtractError::Error("Descendant fonts required".into())
-        ))?;
+        let descendants = maybe_get_array(doc, font, b"DescendantFonts")
+            .ok_or(PdfExtractError::Error("Descendant fonts required".into()))?;
         let ciddict = maybe_deref(doc, &descendants[0])
             .as_dict()
             .map_err(|_| PdfExtractError::Error("should be CID dict".into()))?;
-        let encoding = maybe_get_obj(doc, font, b"Encoding").ok_or(anyhow::anyhow!(
-            PdfExtractError::Error("Encoding required in type0 fonts".into())
+        let encoding = maybe_get_obj(doc, font, b"Encoding").ok_or(PdfExtractError::Error(
+            "Encoding required in type0 fonts".into(),
         ))?;
 
         trace!("base_name {} {:?}", base_name, font);
