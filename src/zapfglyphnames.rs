@@ -205,5 +205,6 @@ pub fn zapfdigbats_names_to_unicode(name: &str) -> Option<u16> {
     ];
 
     let result = names.binary_search_by_key(&name, |&(name, _code)| name);
+
     result.ok().map(|indx| names[indx].1)
 }

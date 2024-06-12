@@ -1,6 +1,3 @@
-extern crate lopdf;
-extern crate pdf_extract;
-
 use lopdf::*;
 use pdf_extract::*;
 use std::env;
@@ -36,7 +33,7 @@ fn main() {
     let mut output_file =
         BufWriter::new(File::create(output_file).expect("could not create output"));
 
-    let doc = Document::load(path).unwrap();
+    let doc = Document::load(path).expect("could not load pdf file");
 
     print_metadata(&doc);
 
@@ -46,7 +43,7 @@ fn main() {
         )),
         "html" => Box::new(HTMLOutput::new(&mut output_file)),
         "svg" => Box::new(SVGOutput::new(&mut output_file)),
-        _ => panic!(),
+        _ => panic!("only txt, svg or html supported"),
     };
 
     output_doc(&doc, output.as_mut()).expect("output failed");
