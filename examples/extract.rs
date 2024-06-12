@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path;
 use std::path::PathBuf;
+use tracing::error;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
@@ -35,7 +36,11 @@ fn main() {
 
     let doc = Document::load(path).expect("could not load pdf file");
 
-    print_metadata(&doc);
+    if let Err(error) = print_metadata(&doc) {
+        error!("metadata failed: {error:?}");
+
+        return;
+    }
 
     let mut output: Box<dyn OutputDev> = match output_kind.as_ref() {
         "txt" => Box::new(PlainTextOutput::new(

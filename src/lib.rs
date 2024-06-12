@@ -33,6 +33,7 @@ pub enum OutputError {
     IoError(std::io::Error),
     PdfError(lopdf::Error),
     Encrypted,
+    Error(String),
 }
 
 impl std::fmt::Display for OutputError {
@@ -42,6 +43,7 @@ impl std::fmt::Display for OutputError {
             OutputError::IoError(e) => write!(f, "IO error: {}", e),
             OutputError::PdfError(e) => write!(f, "PDF error: {}", e),
             OutputError::Encrypted => write!(f, "encrypted"),
+            OutputError::Error(value) => write!(f, "pdf-extract error: {value}"),
         }
     }
 }
@@ -76,23 +78,23 @@ fn get_info(doc: &Document) -> Option<&Dictionary> {
     None
 }
 
-fn get_catalog(doc: &Document) -> &Dictionary {
-    if let Object::Reference(ref id) = doc.trailer.get(b"Root").unwrap() {
+fn get_catalog(doc: &Document) -> Result<&Dictionary, OutputError> {
+    if let Object::Reference(ref id) = doc.trailer.get(b"Root")? {
         if let Ok(Object::Dictionary(ref catalog)) = doc.get_object(*id) {
-            return catalog;
+            return Ok(catalog);
         }
     }
 
-    panic!();
+    Err(OutputError::Error("could not get catalog".into()))
 }
 
-fn get_pages(doc: &Document) -> &Dictionary {
-    let catalog = get_catalog(doc);
+fn get_pages(doc: &Document) -> Result<&Dictionary, OutputError> {
+    let catalog = get_catalog(doc)?;
 
-    match catalog.get(b"Pages").unwrap() {
+    match catalog.get(b"Pages")? {
         Object::Reference(ref id) => match doc.get_object(*id) {
             Ok(Object::Dictionary(ref pages)) => {
-                return pages;
+                return Ok(pages);
             }
             other => {
                 trace!("pages: {:?}", other)
@@ -105,7 +107,9 @@ fn get_pages(doc: &Document) -> &Dictionary {
 
     trace!("catalog {:?}", catalog);
 
-    panic!();
+    Err(OutputError::Error(format!(
+        "could not get catalog {catalog:?}"
+    )))
 }
 
 #[allow(non_upper_case_globals)]
@@ -1848,7 +1852,7 @@ impl Processor {
         output: &mut dyn OutputDev,
         _page_num: u32,
     ) -> Result<(), OutputError> {
-        let content = Content::decode(&content).unwrap();
+        let content = Content::decode(&content)?;
 
         let mut font_table = HashMap::new();
 
@@ -1913,12 +1917,12 @@ impl Processor {
                     trace!("matrix {:?}", gs.ctm);
                 }
                 "CS" => {
-                    let name = operation.operands[0].as_name().unwrap();
+                    let name = operation.operands[0].as_name()?;
 
                     gs.stroke_colorspace = make_colorspace(doc, name, resources);
                 }
                 "cs" => {
-                    let name = operation.operands[0].as_name().unwrap();
+                    let name = operation.operands[0].as_name()?;
 
                     gs.fill_colorspace = make_colorspace(doc, name, resources);
                 }
@@ -2007,7 +2011,7 @@ impl Processor {
                 }
                 "Tf" => {
                     let fonts: &Dictionary = get(doc, resources, b"Font");
-                    let name = operation.operands[0].as_name().unwrap();
+                    let name = operation.operands[0].as_name()?;
                     let font = font_table
                         .entry(name.to_owned())
                         .or_insert_with(|| make_font(doc, get::<&Dictionary>(doc, fonts, name)))
@@ -2117,7 +2121,7 @@ impl Processor {
                 }
                 "gs" => {
                     let ext_gstate: &Dictionary = get(doc, resources, b"ExtGState");
-                    let name = operation.operands[0].as_name().unwrap();
+                    let name = operation.operands[0].as_name()?;
                     let state: &Dictionary = get(doc, ext_gstate, name);
 
                     apply_state(doc, &mut gs, state);
@@ -2205,7 +2209,7 @@ impl Processor {
                     // `Do` process an entire subdocument, so we do a recursive call to `process_stream`
                     // with the subdocument content and resources
                     let xobject: &Dictionary = get(doc, resources, b"XObject");
-                    let name = operation.operands[0].as_name().unwrap();
+                    let name = operation.operands[0].as_name()?;
                     let xf: &Stream = get(doc, xobject, name);
                     let resources = maybe_get_obj(doc, &xf.dict, b"Resources")
                         .and_then(|n| n.as_dict().ok())
@@ -2725,7 +2729,7 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
     }
 }
 
-pub fn print_metadata(doc: &Document) {
+pub fn print_metadata(doc: &Document) -> Result<(), OutputError> {
     trace!("Version: {}", doc.version);
 
     if let Some(info) = get_info(doc) {
@@ -2736,17 +2740,16 @@ pub fn print_metadata(doc: &Document) {
         }
     }
 
-    trace!("Page count: {}", get::<i64>(doc, get_pages(doc), b"Count"));
+    trace!("Page count: {}", get::<i64>(doc, get_pages(doc)?, b"Count"));
 
     trace!("Pages: {:?}", get_pages(doc));
 
     trace!(
         "Type: {:?}",
-        get_pages(doc)
-            .get(b"Type")
-            .and_then(|x| x.as_name())
-            .unwrap()
+        get_pages(doc)?.get(b"Type").and_then(|x| x.as_name())?
     );
+
+    Ok(())
 }
 
 /// Extract the text from a pdf at `path` and return a `String` with the results
@@ -2868,7 +2871,7 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), Outp
 
     for dict in pages {
         let page_num = dict.0;
-        let page_dict = doc.get_object(dict.1).unwrap().as_dict().unwrap();
+        let page_dict = doc.get_object(dict.1)?.as_dict()?;
 
         debug!("page {} {:?}", page_num, page_dict);
 
@@ -2893,7 +2896,7 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), Outp
 
         Processor::process_stream(
             doc,
-            doc.get_page_content(dict.1).unwrap(),
+            doc.get_page_content(dict.1)?,
             resources,
             &media_box,
             output,
