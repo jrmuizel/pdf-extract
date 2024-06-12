@@ -17,10 +17,14 @@ debug = true
 adobe-cmap-parser = "0.4.0"
 encoding = "0.2.33"
 euclid = "0.20.5"
-lopdf = {version = "0.32", default-features = false, features = ["nom_parser"]}
-postscript = "0.14"
+lopdf = { version = "0.32", default-features = false, features = [
+  "nom_parser",
+] }
+postscript = "0.18.2"
 type1-encoding-parser = "0.1.0"
 unicode-normalization = "0.1.19"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 
 [dev-dependencies]
 ureq = "2.6.2"
