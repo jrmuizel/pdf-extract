@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use adobe_cmap_parser::{ByteMapping, CIDRange, CodeRange};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use encoding::all::UTF_16BE;
 use encoding::{DecoderTrap, Encoding};
 use euclid::vec2;
@@ -285,14 +285,14 @@ fn maybe_get<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &
     maybe_get_obj(doc, dict, key).and_then(|o| T::from_obj(doc, o))
 }
 
-fn get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> String {
-    pdf_to_utf8(
+fn get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Result<String> {
+    Ok(pdf_to_utf8(
         dict.get(key)
             .map(|o| maybe_deref(doc, o))
-            .unwrap_or_else(|_| panic!("deref"))
+            .map_err(|_| PdfExtractError::Error("deref failed".into()))?
             .as_name()
-            .expect("name"),
-    )
+            .map_err(|_| PdfExtractError::Error("get name failed".into()))?,
+    ))
 }
 
 fn maybe_get_name_string<'a>(
@@ -337,16 +337,16 @@ struct PdfType3Font<'a> {
 }
 
 fn make_font<'a>(doc: &'a Document, font: &'a Dictionary) -> Result<Rc<dyn PdfFont + 'a>> {
-    let subtype = get_name_string(doc, font, b"Subtype");
+    let subtype = get_name_string(doc, font, b"Subtype")?;
 
     trace!("MakeFont({})", subtype);
 
     Ok(if subtype == "Type0" {
         Rc::new(PdfCIDFont::new(doc, font)?)
     } else if subtype == "Type3" {
-        Rc::new(PdfType3Font::new(doc, font))
+        Rc::new(PdfType3Font::new(doc, font)?)
     } else {
-        Rc::new(PdfSimpleFont::new(doc, font))
+        Rc::new(PdfSimpleFont::new(doc, font)?)
     })
 }
 
@@ -399,9 +399,9 @@ fn encoding_to_unicode_table(name: &[u8]) -> Vec<u16> {
     described in Section 5.5.5, “Character Encoding.”
 */
 impl<'a> PdfSimpleFont<'a> {
-    fn new(doc: &'a Document, font: &'a Dictionary) -> PdfSimpleFont<'a> {
-        let base_name = get_name_string(doc, font, b"BaseFont");
-        let subtype = get_name_string(doc, font, b"Subtype");
+    fn new(doc: &'a Document, font: &'a Dictionary) -> Result<PdfSimpleFont<'a>> {
+        let base_name = get_name_string(doc, font, b"BaseFont")?;
+        let subtype = get_name_string(doc, font, b"Subtype")?;
 
         let encoding: Option<&Object> = get(doc, font, b"Encoding");
 
@@ -453,7 +453,7 @@ impl<'a> PdfSimpleFont<'a> {
 
             match font_file3 {
                 Some(Object::Stream(ref s)) => {
-                    let subtype = get_name_string(doc, &s.dict, b"Subtype");
+                    let subtype = get_name_string(doc, &s.dict, b"Subtype")?;
 
                     trace!("font file {}, {:?}", subtype, s);
                 }
@@ -509,6 +509,7 @@ impl<'a> PdfSimpleFont<'a> {
                             }
                             Object::Name(ref n) => {
                                 let name = pdf_to_utf8(n);
+
                                 // XXX: names of Type1 fonts can map to arbitrary strings instead of real
                                 // unicode names, so we should probably handle this differently
                                 let unicode = glyphnames::name_to_unicode(&name);
@@ -522,14 +523,14 @@ impl<'a> PdfSimpleFont<'a> {
                                         match unicode_map.entry(code as u32) {
                                             // If there's a unicode table entry missing use one based on the name
                                             Entry::Vacant(v) => {
-                                                v.insert(String::from_utf16(&be).unwrap());
+                                                v.insert(String::from_utf16(&be)?);
                                             }
                                             Entry::Occupied(e) => {
-                                                if e.get() != &String::from_utf16(&be).unwrap() {
-                                                    let normal_match =
-                                                        e.get().nfkc().eq(String::from_utf16(&be)
-                                                            .unwrap()
-                                                            .nfkc());
+                                                if e.get() != &String::from_utf16(&be)? {
+                                                    let normal_match = e
+                                                        .get()
+                                                        .nfkc()
+                                                        .eq(String::from_utf16(&be)?.nfkc());
 
                                                     trace!(
                                                         "Unicode mismatch {} {} {:?} {:?} {:?}",
@@ -554,12 +555,9 @@ impl<'a> PdfSimpleFont<'a> {
                                                 Entry::Vacant(v) => {
                                                     v.insert("".to_owned());
                                                 }
-                                                Entry::Occupied(e) => {
-                                                    panic!(
-                                                        "unexpected entry in unicode map {:?}",
-                                                        e
-                                                    )
-                                                }
+                                                Entry::Occupied(e) => Err(PdfExtractError::Error(
+                                                    format!("unicode failed: {e:?}"),
+                                                ))?,
                                             }
                                         }
                                         _ => {
@@ -584,14 +582,12 @@ impl<'a> PdfSimpleFont<'a> {
 
                                 code += 1;
                             }
-                            _ => {
-                                panic!("wrong type {:?}", o);
-                            }
+                            _ => Err(PdfExtractError::Error(format!("wrong type {:?}", o)))?,
                         }
                     }
                 }
 
-                let name = pdf_to_utf8(encoding.get(b"Type").unwrap().as_name().unwrap());
+                let name = pdf_to_utf8(encoding.get(b"Type")?.as_name()?);
 
                 trace!("name: {}", name);
 
@@ -620,21 +616,22 @@ impl<'a> PdfSimpleFont<'a> {
                             .iter()
                             .map(|x| {
                                 if let &Some(x) = x {
-                                    glyphnames::name_to_unicode(x).unwrap()
+                                    glyphnames::name_to_unicode(x).ok_or(anyhow::anyhow!(
+                                        PdfExtractError::Error("no value".into())
+                                    ))
                                 } else {
-                                    0
+                                    Ok(0)
                                 }
                             })
-                            .collect(),
+                            .collect::<Result<Vec<u16>>>()?,
                     );
                 }
             }
-            _ => {
-                panic!()
-            }
+            _ => Err(PdfExtractError::Error("unknown encoding".into()))?,
         }
 
         let mut width_map = HashMap::new();
+
         /* "Ordinarily, a font dictionary that refers to one of the standard fonts
         should omit the FirstChar, LastChar, Widths, and FontDescriptor entries.
         However, it is permissible to override a standard font by including these
@@ -661,10 +658,13 @@ impl<'a> PdfSimpleFont<'a> {
 
             for w in widths {
                 width_map.insert((first_char + i) as CharCode, w);
+
                 i += 1;
             }
 
-            assert_eq!(first_char + i - 1, last_char);
+            if first_char + i - 1 != last_char {
+                Err(PdfExtractError::Error("invalid widths".into()))?
+            }
         } else if is_core_font(&base_name) {
             for font_metrics in core_fonts::metrics().iter() {
                 if font_metrics.0 == base_name {
@@ -672,7 +672,9 @@ impl<'a> PdfSimpleFont<'a> {
                         trace!("has encoding");
 
                         for w in font_metrics.2 {
-                            let c = glyphnames::name_to_unicode(w.2).unwrap();
+                            let c = glyphnames::name_to_unicode(w.2).ok_or(anyhow::anyhow!(
+                                PdfExtractError::Error("name to unicode failed".into())
+                            ))?;
 
                             (0..encoding.len()).for_each(|i| {
                                 if encoding[i] == c {
@@ -693,10 +695,15 @@ impl<'a> PdfSimpleFont<'a> {
                             // -1 is "not encoded"
                             if w.0 != -1 {
                                 table[w.0 as usize] = if base_name == "ZapfDingbats" {
-                                    zapfglyphnames::zapfdigbats_names_to_unicode(w.2)
-                                        .unwrap_or_else(|| panic!("bad name {:?}", w))
+                                    zapfglyphnames::zapfdigbats_names_to_unicode(w.2).ok_or(
+                                        anyhow::anyhow!(PdfExtractError::Error(
+                                            "zapfdigbats names to unicode failed".into()
+                                        )),
+                                    )?
                                 } else {
-                                    glyphnames::name_to_unicode(w.2).unwrap()
+                                    glyphnames::name_to_unicode(w.2).ok_or(anyhow::anyhow!(
+                                        PdfExtractError::Error("name to unicode failed".into())
+                                    ))?
                                 }
                             }
                         }
@@ -710,6 +717,7 @@ impl<'a> PdfSimpleFont<'a> {
 
                         encoding_table = Some(encoding.to_vec());
                     }
+
                     /* "Ordinarily, a font dictionary that refers to one of the standard fonts
                     should omit the FirstChar, LastChar, Widths, and FontDescriptor entries.
                     However, it is permissible to override a standard font by including these
@@ -722,30 +730,30 @@ impl<'a> PdfSimpleFont<'a> {
                 }
             }
         } else {
-            panic!("no widths");
+            Err(PdfExtractError::Error("no widths".into()))?
         }
 
         let missing_width = get::<Option<f64>>(doc, font, b"MissingWidth").unwrap_or(0.);
 
-        PdfSimpleFont {
+        Ok(PdfSimpleFont {
             doc,
             font,
             widths: width_map,
             encoding: encoding_table,
             missing_width,
             unicode_map,
-        }
+        })
     }
 
-    fn get_type(&self) -> String {
+    fn get_type(&self) -> Result<String> {
         get_name_string(self.doc, self.font, b"Type")
     }
 
-    fn get_basefont(&self) -> String {
+    fn get_basefont(&self) -> Result<String> {
         get_name_string(self.doc, self.font, b"BaseFont")
     }
 
-    fn get_subtype(&self) -> String {
+    fn get_subtype(&self) -> Result<String> {
         get_name_string(self.doc, self.font, b"Subtype")
     }
 
@@ -771,17 +779,15 @@ impl<'a> PdfSimpleFont<'a> {
 }
 
 impl<'a> PdfType3Font<'a> {
-    fn new(doc: &'a Document, font: &'a Dictionary) -> PdfType3Font<'a> {
+    fn new(doc: &'a Document, font: &'a Dictionary) -> Result<PdfType3Font<'a>> {
         let unicode_map = get_unicode_map(doc, font);
         let encoding: Option<&Object> = get(doc, font, b"Encoding");
 
-        let encoding_table;
-
-        match encoding {
+        let encoding_table = match encoding {
             Some(Object::Name(ref encoding_name)) => {
                 trace!("encoding {:?}", pdf_to_utf8(encoding_name));
 
-                encoding_table = Some(encoding_to_unicode_table(encoding_name));
+                Some(encoding_to_unicode_table(encoding_name))
             }
             Some(Object::Dictionary(ref encoding)) => {
                 //trace!("Encoding {:?}", encoding);
@@ -808,6 +814,7 @@ impl<'a> PdfType3Font<'a> {
                             }
                             Object::Name(ref n) => {
                                 let name = pdf_to_utf8(n);
+
                                 // XXX: names of Type1 fonts can map to arbitrary strings instead of real
                                 // unicode names, so we should probably handle this differently
                                 let unicode = glyphnames::name_to_unicode(&name);
@@ -824,9 +831,7 @@ impl<'a> PdfType3Font<'a> {
 
                                 code += 1;
                             }
-                            _ => {
-                                panic!("wrong type");
-                            }
+                            _ => Err(PdfExtractError::Error("wrong type".into()))?,
                         }
                     }
                 }
@@ -839,12 +844,10 @@ impl<'a> PdfType3Font<'a> {
                     trace!("name not found");
                 }
 
-                encoding_table = Some(table);
+                Some(table)
             }
-            _ => {
-                panic!()
-            }
-        }
+            _ => Err(PdfExtractError::Error("wrong encoding".into()))?,
+        };
 
         let first_char: i64 = get(doc, font, b"FirstChar");
         let last_char: i64 = get(doc, font, b"LastChar");
@@ -863,18 +866,21 @@ impl<'a> PdfType3Font<'a> {
 
         for w in widths {
             width_map.insert((first_char + i) as CharCode, w);
+
             i += 1;
         }
 
-        assert_eq!(first_char + i - 1, last_char);
+        if first_char + i - 1 != last_char {
+            Err(PdfExtractError::Error("wrong widths".into()))?
+        }
 
-        PdfType3Font {
+        Ok(PdfType3Font {
             doc,
             font,
             widths: width_map,
             encoding: encoding_table,
             unicode_map,
-        }
+        })
     }
 }
 
@@ -919,6 +925,7 @@ impl<'a> dyn PdfFont + 'a {
             .char_codes(chars)
             .map(|x| self.decode_char(x.0))
             .collect::<Vec<_>>();
+
         strings.join("")
     }
 }
@@ -1132,14 +1139,16 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
 
 impl<'a> PdfCIDFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> Result<PdfCIDFont<'a>> {
-        let base_name = get_name_string(doc, font, b"BaseFont");
-        let descendants = maybe_get_array(doc, font, b"DescendantFonts")
-            .with_context(|| "Descendant fonts required")?;
+        let base_name = get_name_string(doc, font, b"BaseFont")?;
+        let descendants = maybe_get_array(doc, font, b"DescendantFonts").ok_or(anyhow::anyhow!(
+            PdfExtractError::Error("Descendant fonts required".into())
+        ))?;
         let ciddict = maybe_deref(doc, &descendants[0])
             .as_dict()
-            .with_context(|| "should be CID dict")?;
-        let encoding = maybe_get_obj(doc, font, b"Encoding")
-            .with_context(|| "Encoding required in type0 fonts")?;
+            .map_err(|_| PdfExtractError::Error("should be CID dict".into()))?;
+        let encoding = maybe_get_obj(doc, font, b"Encoding").ok_or(anyhow::anyhow!(
+            PdfExtractError::Error("Encoding required in type0 fonts".into())
+        ))?;
 
         trace!("base_name {} {:?}", base_name, font);
 
@@ -1195,7 +1204,9 @@ impl<'a> PdfCIDFont<'a> {
 
         trace!("{:?}", font_dict);
 
-        let _f = font_dict.as_dict().with_context(|| "must be dict")?;
+        let _f = font_dict
+            .as_dict()
+            .map_err(|_| PdfExtractError::Error("must be dict".into()))?;
         let default_width = get::<Option<i64>>(doc, ciddict, b"DW").unwrap_or(1000);
         let w: Option<Vec<&Object>> = get(doc, ciddict, b"W");
 
@@ -1297,6 +1308,7 @@ impl<'a> PdfFont for PdfCIDFont<'a> {
 
     fn decode_char(&self, char: CharCode) -> String {
         let s = self.to_unicode.as_ref().and_then(|x| x.get(&char));
+
         if let Some(s) = s {
             s.clone()
         } else {
@@ -1719,11 +1731,9 @@ fn make_colorspace<'a>(
                                 )))?,
                             },
                             Object::Array(cs) => {
-                                let cs_name = pdf_to_utf8(
-                                    cs[0]
-                                        .as_name()
-                                        .with_context(|| "first arg must be a name")?,
-                                );
+                                let cs_name = pdf_to_utf8(cs[0].as_name().map_err(|_| {
+                                    PdfExtractError::Error("first arg must be a name".into())
+                                })?);
 
                                 match cs_name.as_ref() {
                                     "ICCBased" => {
@@ -1735,9 +1745,11 @@ fn make_colorspace<'a>(
                                         AlternateColorSpace::ICCBased(get_contents(stream))
                                     }
                                     "CalGray" => {
-                                        let dict = cs[1]
-                                            .as_dict()
-                                            .with_context(|| "second arg must be a dict")?;
+                                        let dict = cs[1].as_dict().map_err(|_| {
+                                            PdfExtractError::Error(
+                                                "second arg must be a dict".into(),
+                                            )
+                                        })?;
 
                                         AlternateColorSpace::CalGray(CalGray {
                                             white_point: get(doc, dict, b"WhitePoint"),
@@ -1746,9 +1758,11 @@ fn make_colorspace<'a>(
                                         })
                                     }
                                     "CalRGB" => {
-                                        let dict = cs[1]
-                                            .as_dict()
-                                            .with_context(|| "second arg must be a dict")?;
+                                        let dict = cs[1].as_dict().map_err(|_| {
+                                            PdfExtractError::Error(
+                                                "second arg must be a dict".into(),
+                                            )
+                                        })?;
 
                                         AlternateColorSpace::CalRGB(CalRGB {
                                             white_point: get(doc, dict, b"WhitePoint"),
@@ -1758,9 +1772,11 @@ fn make_colorspace<'a>(
                                         })
                                     }
                                     "Lab" => {
-                                        let dict = cs[1]
-                                            .as_dict()
-                                            .with_context(|| "second arg must be a dict")?;
+                                        let dict = cs[1].as_dict().map_err(|_| {
+                                            PdfExtractError::Error(
+                                                "second arg must be a dict".into(),
+                                            )
+                                        })?;
 
                                         AlternateColorSpace::Lab(Lab {
                                             white_point: get(doc, dict, b"WhitePoint"),
@@ -1798,9 +1814,9 @@ fn make_colorspace<'a>(
                         ColorSpace::ICCBased(get_contents(stream))
                     }
                     "CalGray" => {
-                        let dict = cs[1]
-                            .as_dict()
-                            .with_context(|| "second arg must be a dict")?;
+                        let dict = cs[1].as_dict().map_err(|_| {
+                            PdfExtractError::Error("second arg must be a dict".into())
+                        })?;
 
                         ColorSpace::CalGray(CalGray {
                             white_point: get(doc, dict, b"WhitePoint"),
@@ -1809,9 +1825,9 @@ fn make_colorspace<'a>(
                         })
                     }
                     "CalRGB" => {
-                        let dict = cs[1]
-                            .as_dict()
-                            .with_context(|| "second arg must be a dict")?;
+                        let dict = cs[1].as_dict().map_err(|_| {
+                            PdfExtractError::Error("second arg must be a dict".into())
+                        })?;
 
                         ColorSpace::CalRGB(CalRGB {
                             white_point: get(doc, dict, b"WhitePoint"),
@@ -1821,9 +1837,9 @@ fn make_colorspace<'a>(
                         })
                     }
                     "Lab" => {
-                        let dict = cs[1]
-                            .as_dict()
-                            .with_context(|| "second arg must be a dict")?;
+                        let dict = cs[1].as_dict().map_err(|_| {
+                            PdfExtractError::Error("second arg must be a dict".into())
+                        })?;
 
                         ColorSpace::Lab(Lab {
                             white_point: get(doc, dict, b"WhitePoint"),
