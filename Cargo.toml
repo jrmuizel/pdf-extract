@@ -2,7 +2,7 @@
 authors = ["Jeff Muizelaar <jmuizelaar@mozilla.com>"]
 description = "A library to extract content from pdfs"
 documentation = "https://docs.rs/crate/pdf-extract/"
-edition = "2018"
+edition = "2021"
 keywords = ["pdf2text", "text", "pdf", "pdf2txt"]
 license = "MIT"
 name = "pdf-extract"
