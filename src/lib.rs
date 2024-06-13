@@ -1301,14 +1301,11 @@ impl<'a> PdfCIDFont<'a> {
                     let cid = w[i].as_i64().map_err(|error| {
                         PdfExtractError::Error(format!("id should be num: {error:?}"))
                     })?;
-                    let mut j = 0;
 
                     trace!("wa: {:?} -> {:?}", cid, wa);
 
-                    for w in wa.iter() {
-                        widths.insert((cid + j) as CharCode, as_num(w)?);
-
-                        j += 1;
+                    for (j, w) in wa.iter().enumerate() {
+                        widths.insert((cid as usize + j) as CharCode, as_num(w)?);
                     }
 
                     i += 2;
