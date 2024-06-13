@@ -162,15 +162,22 @@ fn to_utf8(encoding: &[u16], s: &[u8]) -> Result<String> {
     Ok(result?)
 }
 
-fn maybe_deref<'a>(doc: &'a Document, o: &'a Object) -> &'a Object {
-    match o {
-        Object::Reference(r) => doc.get_object(*r).expect("missing object reference"),
+fn maybe_deref<'a>(doc: &'a Document, o: &'a Object) -> Result<&'a Object> {
+    let result = match o {
+        Object::Reference(r) => doc
+            .get_object(*r)
+            .map_err(|_error| PdfExtractError::Error("missing object reference".into()))?,
         _ => o,
-    }
+    };
+
+    Ok(result)
 }
 
 fn maybe_get_obj<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<&'a Object> {
-    dict.get(key).map(|o| maybe_deref(doc, o)).ok()
+    dict.get(key)
+        .map(|o| maybe_deref(doc, o).ok())
+        .ok()
+        .flatten()
 }
 
 // an intermediate trait that can be used to chain conversions that may have failed
@@ -215,7 +222,7 @@ impl<'a, T: FromObj<'a>> FromOptObj<'a> for T {
 // on arrays, streams and dicts
 impl<'a, T: FromObj<'a>> FromObj<'a> for Vec<T> {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Result<Option<Self>> {
-        let Ok(entries) = maybe_deref(doc, obj).as_array() else {
+        let Ok(entries) = maybe_deref(doc, obj)?.as_array() else {
             return Ok(None);
         };
 
@@ -232,7 +239,7 @@ impl<'a, T: FromObj<'a>> FromObj<'a> for Vec<T> {
 // we don't want to do that
 impl<'a, T: FromObj<'a>> FromObj<'a> for [T; 4] {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Result<Option<Self>> {
-        let entries = match maybe_deref(doc, obj).as_array() {
+        let entries = match maybe_deref(doc, obj)?.as_array() {
             Ok(entries) if entries.len() == 4 => entries,
             _ => return Ok(None),
         };
@@ -254,7 +261,7 @@ impl<'a, T: FromObj<'a>> FromObj<'a> for [T; 4] {
 
 impl<'a, T: FromObj<'a>> FromObj<'a> for [T; 3] {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Result<Option<Self>> {
-        let entries = match maybe_deref(doc, obj).as_array() {
+        let entries = match maybe_deref(doc, obj)?.as_array() {
             Ok(entries) if entries.len() == 3 => entries,
             _ => return Ok(None),
         };
@@ -295,19 +302,19 @@ impl<'a> FromObj<'a> for i64 {
 
 impl<'a> FromObj<'a> for &'a Dictionary {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Result<Option<&'a Dictionary>> {
-        Ok(maybe_deref(doc, obj).as_dict().ok())
+        Ok(maybe_deref(doc, obj)?.as_dict().ok())
     }
 }
 
 impl<'a> FromObj<'a> for &'a Stream {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Result<Option<&'a Stream>> {
-        Ok(maybe_deref(doc, obj).as_stream().ok())
+        Ok(maybe_deref(doc, obj)?.as_stream().ok())
     }
 }
 
 impl<'a> FromObj<'a> for &'a Object {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Result<Option<&'a Object>> {
-        Ok(Some(maybe_deref(doc, obj)))
+        Ok(Some(maybe_deref(doc, obj)?))
     }
 }
 
@@ -330,7 +337,7 @@ fn maybe_get<'a, T: FromObj<'a>>(
 fn get_name_string<'a>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Result<String> {
     pdf_to_utf8(
         dict.get(key)
-            .map(|o| maybe_deref(doc, o))
+            .map(|o| maybe_deref(doc, o))?
             .map_err(|_| PdfExtractError::Error("deref failed".into()))?
             .as_name()
             .map_err(|_| PdfExtractError::Error("get name failed".into()))?,
@@ -476,8 +483,11 @@ impl<'a> PdfSimpleFont<'a> {
 
                         //trace!("font contents {:?}", pdf_to_utf8(&s));
 
-                        type1_encoding =
-                            Some(type1_encoding_parser::get_encoding_map(&s).expect("encoding"));
+                        type1_encoding = Some(
+                            type1_encoding_parser::get_encoding_map(&s).map_err(|error| {
+                                PdfExtractError::Error(format!("type1 encoding error: {error}"))
+                            })?,
+                        );
                     }
                     _ => {
                         trace!("font file {:?}", file)
@@ -550,7 +560,7 @@ impl<'a> PdfSimpleFont<'a> {
                     let mut code = 0;
 
                     for o in differences {
-                        let o = maybe_deref(doc, o);
+                        let o = maybe_deref(doc, o)?;
 
                         match o {
                             Object::Integer(i) => {
@@ -804,9 +814,13 @@ impl<'a> PdfSimpleFont<'a> {
         get_name_string(self.doc, self.font, b"Subtype")
     }
 
-    fn get_widths(&self) -> Option<&Vec<Object>> {
-        maybe_get_obj(self.doc, self.font, b"Widths")
-            .map(|widths| widths.as_array().expect("Widths should be an array"))
+    fn get_widths(&self) -> Result<Option<&Vec<Object>>> {
+        Ok(maybe_get_obj(self.doc, self.font, b"Widths")
+            .map(|widths| widths.as_array())
+            .transpose()
+            .map_err(|error| {
+                PdfExtractError::Error(format!("Widths should be an array: {error:?}"))
+            })?)
     }
 
     /* For type1: This entry is obsolescent and its use is no longer recommended. (See
@@ -1016,31 +1030,30 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
         if let Some(ref unicode_map) = self.unicode_map {
             let s = unicode_map.get(&char);
 
-            let s = match s {
-                None => {
-                    trace!(
-                        "missing char {:?} in unicode map {:?} for {:?}",
-                        char,
-                        unicode_map,
-                        self.font
-                    );
+            let s =
+                match s {
+                    None => {
+                        trace!(
+                            "missing char {:?} in unicode map {:?} for {:?}",
+                            char,
+                            unicode_map,
+                            self.font
+                        );
 
-                    // some pdf's like http://arxiv.org/pdf/2312.00064v1 are missing entries in their unicode map but do have
-                    // entries in the encoding.
-                    let encoding = self
-                        .encoding
-                        .as_ref()
-                        .map(|x| &x[..])
-                        .expect("missing unicode map and encoding");
+                        // some pdf's like http://arxiv.org/pdf/2312.00064v1 are missing entries in their unicode map but do have
+                        // entries in the encoding.
+                        let encoding = self.encoding.as_ref().map(|x| &x[..]).ok_or(
+                            PdfExtractError::Error("missing unicode map and encoding".into()),
+                        )?;
 
-                    let s = to_utf8(encoding, &slice)?;
+                        let s = to_utf8(encoding, &slice)?;
 
-                    trace!("falling back to encoding {} -> {:?}", char, s);
+                        trace!("falling back to encoding {} -> {:?}", char, s);
 
-                    s
-                }
-                Some(s) => s.clone(),
-            };
+                        s
+                    }
+                    Some(s) => s.clone(),
+                };
 
             return Ok(s);
         }
@@ -1148,6 +1161,7 @@ fn get_unicode_map<'a>(
             let cmap = adobe_cmap_parser::get_unicode_map(&contents).map_err(|error| {
                 PdfExtractError::Error(format!("adobe get unicode map failed: {error:?}"))
             })?;
+
             let mut unicode = HashMap::new();
 
             // "It must use the beginbfchar, endbfchar, beginbfrange, and endbfrange operators to
@@ -1157,10 +1171,13 @@ fn get_unicode_map<'a>(
                 let mut be: Vec<u16> = Vec::new();
                 let mut i = 0;
 
-                assert!(v.len() % 2 == 0);
+                if v.len() % 2 != 0 {
+                    Err(PdfExtractError::Error("length not even".into()))?
+                }
 
                 while i < v.len() {
                     be.push(((v[i] as u16) << 8) | v[i + 1] as u16);
+
                     i += 2;
                 }
 
@@ -1204,7 +1221,7 @@ impl<'a> PdfCIDFont<'a> {
         let base_name = get_name_string(doc, font, b"BaseFont")?;
         let descendants = maybe_get_array(doc, font, b"DescendantFonts")
             .ok_or(PdfExtractError::Error("Descendant fonts required".into()))?;
-        let ciddict = maybe_deref(doc, &descendants[0])
+        let ciddict = maybe_deref(doc, &descendants[0])?
             .as_dict()
             .map_err(|_| PdfExtractError::Error("should be CID dict".into()))?;
         let encoding = maybe_get_obj(doc, font, b"Encoding").ok_or(PdfExtractError::Error(
@@ -1281,21 +1298,28 @@ impl<'a> PdfCIDFont<'a> {
         if let Some(w) = w {
             while i < w.len() {
                 if let Object::Array(ref wa) = w[i + 1] {
-                    let cid = w[i].as_i64().expect("id should be num");
+                    let cid = w[i].as_i64().map_err(|error| {
+                        PdfExtractError::Error(format!("id should be num: {error:?}"))
+                    })?;
                     let mut j = 0;
 
                     trace!("wa: {:?} -> {:?}", cid, wa);
 
-                    wa.iter().for_each(|w| {
-                        widths.insert((cid + j) as CharCode, as_num(w));
+                    for w in wa.iter() {
+                        widths.insert((cid + j) as CharCode, as_num(w)?);
+
                         j += 1;
-                    });
+                    }
 
                     i += 2;
                 } else {
-                    let c_first = w[i].as_i64().expect("first should be num");
-                    let c_last = w[i].as_i64().expect("last should be num");
-                    let c_width = as_num(w[i]);
+                    let c_first = w[i].as_i64().map_err(|error| {
+                        PdfExtractError::Error(format!("first should be num: {error:?}"))
+                    })?;
+                    let c_last = w[i].as_i64().map_err(|error| {
+                        PdfExtractError::Error(format!("last should be num: {error:?}"))
+                    })?;
+                    let c_width = as_num(w[i])?;
 
                     for id in c_first..c_last {
                         widths.insert(id as CharCode, c_width);
@@ -1465,7 +1489,7 @@ impl Function {
         let dict = match obj {
             Object::Dictionary(ref dict) => dict,
             Object::Stream(ref stream) => &stream.dict,
-            _ => panic!(),
+            _ => Err(PdfExtractError::Error("unknown object".into()))?,
         };
 
         let function_type: i64 = get(doc, dict, b"FunctionType")?;
@@ -1474,7 +1498,7 @@ impl Function {
             0 => {
                 let stream = match obj {
                     Object::Stream(ref stream) => stream,
-                    _ => panic!(),
+                    _ => Err(PdfExtractError::Error("not a stream".into()))?,
                 };
 
                 let range: Vec<f64> = get(doc, dict, b"Range")?;
@@ -1517,21 +1541,22 @@ impl Function {
 
                 Ok(Function::Type2(Type2Func { c0, c1, n }))
             }
-            _ => {
-                panic!("unhandled function type {}", function_type)
-            }
+            _ => Err(PdfExtractError::Error(format!(
+                "unhandled function type {}",
+                function_type
+            )))?,
         }
     }
 }
 
-fn as_num(o: &Object) -> f64 {
-    match o {
+fn as_num(o: &Object) -> Result<f64> {
+    let result = match o {
         Object::Integer(i) => *i as f64,
         Object::Real(f) => (*f).into(),
-        _ => {
-            panic!("not a number")
-        }
-    }
+        _ => Err(PdfExtractError::Error("not a number: {o:?}".into()))?,
+    };
+
+    Ok(result)
 }
 
 #[derive(Clone)]
@@ -1657,7 +1682,7 @@ fn apply_state(doc: &Document, gs: &mut GraphicsState, state: &Dictionary) -> Re
         let k: &[u8] = k.as_ref();
 
         match k {
-            b"SMask" => match maybe_deref(doc, v) {
+            b"SMask" => match maybe_deref(doc, v)? {
                 Object::Name(ref name) => {
                     if name == b"None" {
                         gs.smask = None;
@@ -1675,7 +1700,11 @@ fn apply_state(doc: &Document, gs: &mut GraphicsState, state: &Dictionary) -> Re
             },
             b"Type" => match v {
                 Object::Name(ref name) => {
-                    assert_eq!(name, b"ExtGState")
+                    if name != b"ExtGState" {
+                        Err(PdfExtractError::Error(format!(
+                            "{name:?} should be ExtGState"
+                        )))?
+                    }
                 }
                 _ => Err(PdfExtractError::Error("unexpected type".into()))?,
             },
@@ -1806,7 +1835,7 @@ fn make_colorspace<'a>(
                             PdfExtractError::Error("second arg must be a name".into())
                         })?)?;
 
-                        let alternate_space = match &maybe_deref(doc, &cs[2]) {
+                        let alternate_space = match &maybe_deref(doc, &cs[2])? {
                             Object::Name(name) => match &name[..] {
                                 b"DeviceGray" => AlternateColorSpace::DeviceGray,
                                 b"DeviceRGB" => AlternateColorSpace::DeviceRGB,
@@ -1822,7 +1851,7 @@ fn make_colorspace<'a>(
 
                                 match cs_name.as_ref() {
                                     "ICCBased" => {
-                                        let stream = maybe_deref(doc, &cs[1]).as_stream()?;
+                                        let stream = maybe_deref(doc, &cs[1])?.as_stream()?;
 
                                         trace!("ICCBased {:?}", stream);
 
@@ -1881,7 +1910,7 @@ fn make_colorspace<'a>(
                         };
 
                         let tint_transform =
-                            Box::new(Function::new(doc, maybe_deref(doc, &cs[3]))?);
+                            Box::new(Function::new(doc, maybe_deref(doc, &cs[3])?)?);
 
                         trace!("{:?} {:?} {:?}", name, alternate_space, tint_transform);
 
@@ -1892,7 +1921,7 @@ fn make_colorspace<'a>(
                         })
                     }
                     "ICCBased" => {
-                        let stream = maybe_deref(doc, &cs[1]).as_stream()?;
+                        let stream = maybe_deref(doc, &cs[1])?.as_stream()?;
 
                         trace!("ICCBased {:?}", stream);
 
@@ -2028,12 +2057,12 @@ impl Processor {
                     }
 
                     let m = Transform2D::row_major(
-                        as_num(&operation.operands[0]),
-                        as_num(&operation.operands[1]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3]),
-                        as_num(&operation.operands[4]),
-                        as_num(&operation.operands[5]),
+                        as_num(&operation.operands[0])?,
+                        as_num(&operation.operands[1])?,
+                        as_num(&operation.operands[2])?,
+                        as_num(&operation.operands[3])?,
+                        as_num(&operation.operands[4])?,
+                        as_num(&operation.operands[5])?,
                     );
 
                     gs.ctm = gs.ctm.pre_transform(&m);
@@ -2057,7 +2086,11 @@ impl Processor {
 
                             Vec::new()
                         }
-                        _ => operation.operands.iter().map(as_num).collect(),
+                        _ => operation
+                            .operands
+                            .iter()
+                            .map(as_num)
+                            .collect::<Result<Vec<_>>>()?,
                     };
                 }
                 "sc" | "scn" => {
@@ -2067,7 +2100,11 @@ impl Processor {
 
                             Vec::new()
                         }
-                        _ => operation.operands.iter().map(as_num).collect(),
+                        _ => operation
+                            .operands
+                            .iter()
+                            .map(as_num)
+                            .collect::<Result<Vec<_>>>()?,
                     };
                 }
                 "G" | "g" | "RG" | "rg" | "K" | "k" => {
@@ -2123,16 +2160,16 @@ impl Processor {
                     )))?,
                 },
                 "Tc" => {
-                    gs.ts.character_spacing = as_num(&operation.operands[0]);
+                    gs.ts.character_spacing = as_num(&operation.operands[0])?;
                 }
                 "Tw" => {
-                    gs.ts.word_spacing = as_num(&operation.operands[0]);
+                    gs.ts.word_spacing = as_num(&operation.operands[0])?;
                 }
                 "Tz" => {
-                    gs.ts.horizontal_scaling = as_num(&operation.operands[0]) / 100.;
+                    gs.ts.horizontal_scaling = as_num(&operation.operands[0])? / 100.;
                 }
                 "TL" => {
-                    gs.ts.leading = as_num(&operation.operands[0]);
+                    gs.ts.leading = as_num(&operation.operands[0])?;
                 }
                 "Tf" => {
                     let fonts: &Dictionary = get(doc, resources, b"Font")?;
@@ -2169,7 +2206,7 @@ impl Processor {
 
                     gs.ts.font = Some(font);
 
-                    gs.ts.font_size = as_num(&operation.operands[1]);
+                    gs.ts.font_size = as_num(&operation.operands[1])?;
 
                     trace!(
                         "font {} size: {} {:?}",
@@ -2179,17 +2216,20 @@ impl Processor {
                     );
                 }
                 "Ts" => {
-                    gs.ts.rise = as_num(&operation.operands[0]);
+                    gs.ts.rise = as_num(&operation.operands[0])?;
                 }
                 "Tm" => {
-                    assert!(operation.operands.len() == 6);
+                    if operation.operands.len() != 6 {
+                        Err(PdfExtractError::Error("operation length is not 6".into()))?
+                    }
+
                     tlm = Transform2D::row_major(
-                        as_num(&operation.operands[0]),
-                        as_num(&operation.operands[1]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3]),
-                        as_num(&operation.operands[4]),
-                        as_num(&operation.operands[5]),
+                        as_num(&operation.operands[0])?,
+                        as_num(&operation.operands[1])?,
+                        as_num(&operation.operands[2])?,
+                        as_num(&operation.operands[3])?,
+                        as_num(&operation.operands[4])?,
+                        as_num(&operation.operands[5])?,
                     );
                     gs.ts.tm = tlm;
 
@@ -2202,10 +2242,12 @@ impl Processor {
                       tx and ty are numbers expressed in unscaled text space units.
                       More precisely, this operator performs the following assignments:
                     */
-                    assert!(operation.operands.len() == 2);
+                    if operation.operands.len() != 2 {
+                        Err(PdfExtractError::Error("operation length is not 2".into()))?
+                    }
 
-                    let tx = as_num(&operation.operands[0]);
-                    let ty = as_num(&operation.operands[1]);
+                    let tx = as_num(&operation.operands[0])?;
+                    let ty = as_num(&operation.operands[1])?;
 
                     trace!("translation: {} {}", tx, ty);
 
@@ -2221,10 +2263,12 @@ impl Processor {
                     /* Move to the start of the next line, offset from the start of the current line by (tx , ty ).
                       As a side effect, this operator sets the leading parameter in the text state.
                     */
-                    assert!(operation.operands.len() == 2);
+                    if operation.operands.len() != 2 {
+                        Err(PdfExtractError::Error("operation length is not 2".into()))?
+                    }
 
-                    let tx = as_num(&operation.operands[0]);
-                    let ty = as_num(&operation.operands[1]);
+                    let tx = as_num(&operation.operands[0])?;
+                    let ty = as_num(&operation.operands[1])?;
 
                     trace!("translation: {} {}", tx, ty);
 
@@ -2275,26 +2319,26 @@ impl Processor {
                     );
                 }
                 "w" => {
-                    gs.line_width = as_num(&operation.operands[0]);
+                    gs.line_width = as_num(&operation.operands[0])?;
                 }
                 "J" | "j" | "M" | "d" | "ri" => {
                     trace!("unknown graphics state operator {:?}", operation);
                 }
                 "m" => path.ops.push(PathOp::MoveTo(
-                    as_num(&operation.operands[0]),
-                    as_num(&operation.operands[1]),
+                    as_num(&operation.operands[0])?,
+                    as_num(&operation.operands[1])?,
                 )),
                 "l" => path.ops.push(PathOp::LineTo(
-                    as_num(&operation.operands[0]),
-                    as_num(&operation.operands[1]),
+                    as_num(&operation.operands[0])?,
+                    as_num(&operation.operands[1])?,
                 )),
                 "c" => path.ops.push(PathOp::CurveTo(
-                    as_num(&operation.operands[0]),
-                    as_num(&operation.operands[1]),
-                    as_num(&operation.operands[2]),
-                    as_num(&operation.operands[3]),
-                    as_num(&operation.operands[4]),
-                    as_num(&operation.operands[5]),
+                    as_num(&operation.operands[0])?,
+                    as_num(&operation.operands[1])?,
+                    as_num(&operation.operands[2])?,
+                    as_num(&operation.operands[3])?,
+                    as_num(&operation.operands[4])?,
+                    as_num(&operation.operands[5])?,
                 )),
                 "v" => {
                     let (x, y) = path.current_point()?;
@@ -2302,26 +2346,26 @@ impl Processor {
                     path.ops.push(PathOp::CurveTo(
                         x,
                         y,
-                        as_num(&operation.operands[0]),
-                        as_num(&operation.operands[1]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3]),
+                        as_num(&operation.operands[0])?,
+                        as_num(&operation.operands[1])?,
+                        as_num(&operation.operands[2])?,
+                        as_num(&operation.operands[3])?,
                     ))
                 }
                 "y" => path.ops.push(PathOp::CurveTo(
-                    as_num(&operation.operands[0]),
-                    as_num(&operation.operands[1]),
-                    as_num(&operation.operands[2]),
-                    as_num(&operation.operands[3]),
-                    as_num(&operation.operands[2]),
-                    as_num(&operation.operands[3]),
+                    as_num(&operation.operands[0])?,
+                    as_num(&operation.operands[1])?,
+                    as_num(&operation.operands[2])?,
+                    as_num(&operation.operands[3])?,
+                    as_num(&operation.operands[2])?,
+                    as_num(&operation.operands[3])?,
                 )),
                 "h" => path.ops.push(PathOp::Close),
                 "re" => path.ops.push(PathOp::Rect(
-                    as_num(&operation.operands[0]),
-                    as_num(&operation.operands[1]),
-                    as_num(&operation.operands[2]),
-                    as_num(&operation.operands[3]),
+                    as_num(&operation.operands[0])?,
+                    as_num(&operation.operands[1])?,
+                    as_num(&operation.operands[2])?,
+                    as_num(&operation.operands[3])?,
                 )),
                 "s" | "f*" | "B" | "B*" | "b" => {
                     trace!("unhandled path op {:?}", operation);
