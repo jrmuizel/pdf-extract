@@ -1,19 +1,18 @@
 extern crate lopdf;
 
 use adobe_cmap_parser::{ByteMapping, CodeRange, CIDRange};
+use encoding_rs::UTF_16BE;
 use lopdf::content::Content;
 use lopdf::*;
 use euclid::*;
 use lopdf::encryption::DecryptionError;
 use std::fmt::{Debug, Formatter};
-extern crate encoding;
+extern crate encoding_rs;
 extern crate euclid;
 extern crate adobe_cmap_parser;
 extern crate type1_encoding_parser;
 extern crate unicode_normalization;
 use euclid::vec2;
-use encoding::{Encoding, DecoderTrap};
-use encoding::all::UTF_16BE;
 use unicode_normalization::UnicodeNormalization;
 use std::fmt;
 use std::str;
@@ -151,23 +150,23 @@ const PDFDocEncoding: &'static [u16] = &[
 
 fn pdf_to_utf8(s: &[u8]) -> String {
     if s.len() > 2 && s[0] == 0xfe && s[1] == 0xff {
-        return UTF_16BE.decode(&s[2..], DecoderTrap::Strict).unwrap()
+        return UTF_16BE.decode_without_bom_handling_and_without_replacement(&s[2..]).unwrap().to_string()
     } else {
         let r : Vec<u8> = s.iter().map(|x| *x).flat_map(|x| {
                let k = PDFDocEncoding[x as usize];
                vec![(k>>8) as u8, k as u8].into_iter()}).collect();
-        return UTF_16BE.decode(&r, DecoderTrap::Strict).unwrap()
+        return UTF_16BE.decode_without_bom_handling_and_without_replacement(&r).unwrap().to_string()
     }
 }
 
 fn to_utf8(encoding: &[u16], s: &[u8]) -> String {
     if s.len() > 2 && s[0] == 0xfe && s[1] == 0xff {
-        return UTF_16BE.decode(&s[2..], DecoderTrap::Strict).unwrap()
+        return UTF_16BE.decode_without_bom_handling_and_without_replacement(&s[2..]).unwrap().to_string()
     } else {
         let r : Vec<u8> = s.iter().map(|x| *x).flat_map(|x| {
             let k = encoding[x as usize];
             vec![(k>>8) as u8, k as u8].into_iter()}).collect();
-        return UTF_16BE.decode(&r, DecoderTrap::Strict).unwrap()
+        return UTF_16BE.decode_without_bom_handling_and_without_replacement(&r).unwrap().to_string()
     }
 }
 
