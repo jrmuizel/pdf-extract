@@ -16,6 +16,7 @@ debug = true
 [dependencies]
 adobe-cmap-parser = "0.4.0"
 encoding = "0.2.33"
+encoding_rs = "0.8.34"
 euclid = "0.20.5"
 lopdf = {version = "0.32", default-features = false, features = ["nom_parser"]}
 postscript = "0.14"
