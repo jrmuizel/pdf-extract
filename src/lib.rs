@@ -2213,9 +2213,10 @@ pub fn extract_text_by_pages<P: std::convert::AsRef<std::path::Path>>(path: P) -
     {
         let mut doc = Document::load(path)?;
         maybe_decrypt(&mut doc)?;
-        let page_num = 0;
+        let mut page_num = 1;
         while let Ok(content) = extract_text_by_page(&doc, page_num) {
             v.push(content);
+            page_num += 1;
         }
     }
     Ok(v)
@@ -2226,9 +2227,10 @@ pub fn extract_text_by_pages_encrypted<P: std::convert::AsRef<std::path::Path>, 
     {
         let mut doc = Document::load(path)?;
         doc.decrypt(password)?;
-        let page_num = 0;
+        let mut page_num = 1;
         while let Ok(content) = extract_text_by_page(&mut doc, page_num) {
             v.push(content);
+            page_num += 1;
         }
     }
     Ok(v)
@@ -2239,9 +2241,10 @@ pub fn extract_text_from_mem_by_pages(buffer: &[u8]) -> Result<Vec<String>, Outp
     {
         let mut doc = Document::load_mem(buffer)?;
         maybe_decrypt(&mut doc)?;
-        let page_num = 0;
+        let mut page_num = 1;
         while let Ok(content) = extract_text_by_page(&doc, page_num) {
             v.push(content);
+            page_num += 1;
         }
     }
     Ok(v)
@@ -2252,9 +2255,10 @@ pub fn extract_text_from_mem_by_pages_encrypted<PW: AsRef<[u8]>>(buffer: &[u8], 
     {
         let mut doc = Document::load_mem(buffer)?;
         doc.decrypt(password)?;
-        let page_num = 0;
+        let mut page_num = 1;
         while let Ok(content) = extract_text_by_page(&doc, page_num) {
             v.push(content);
+            page_num += 1;
         }
     }
     Ok(v)
