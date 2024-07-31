@@ -39,7 +39,6 @@ pub enum OutputError
     FormatError(std::fmt::Error),
     IoError(std::io::Error),
     PdfError(lopdf::Error),
-    PageNotFound,
 }
 
 impl std::fmt::Display for OutputError
@@ -49,7 +48,6 @@ impl std::fmt::Display for OutputError
             OutputError::FormatError(e) => write!(f, "Formating error: {}", e),
             OutputError::IoError(e) => write!(f, "IO error: {}", e),
             OutputError::PdfError(e) => write!(f, "PDF error: {}", e),
-            OutputError::PageNotFound => write!(f, "Page not found:")
         }
     }
 }
@@ -2307,7 +2305,7 @@ pub fn output_doc_page(doc: &Document, output: &mut dyn OutputDev, page_num: u32
     }
     let empty_resources = Dictionary::new();
     let pages = doc.get_pages();
-    let object_id = pages.get(&page_num).ok_or(OutputError::PageNotFound)?;
+    let object_id = pages.get(&page_num).ok_or(lopdf::Error::PageNumberNotFound(page_num))?;
 
     let mut p = Processor::new();
     output_doc_inner(page_num, *object_id, doc, &mut p, output, &empty_resources)?;
