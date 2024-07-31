@@ -1,28 +1,30 @@
-extern crate lopdf;
-
-use adobe_cmap_parser::{ByteMapping, CodeRange, CIDRange};
-use encoding_rs::UTF_16BE;
-use lopdf::content::Content;
-use lopdf::*;
-use euclid::*;
-use lopdf::encryption::DecryptionError;
-use std::fmt::{Debug, Formatter};
+extern crate adobe_cmap_parser;
 extern crate encoding_rs;
 extern crate euclid;
-extern crate adobe_cmap_parser;
+extern crate lopdf;
 extern crate type1_encoding_parser;
 extern crate unicode_normalization;
-use euclid::vec2;
-use unicode_normalization::UnicodeNormalization;
-use std::fmt;
-use std::str;
-use std::fs::File;
-use std::slice::Iter;
-use std::collections::HashMap;
+
 use std::collections::hash_map::Entry;
-use std::rc::Rc;
+use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
+use std::fmt;
+use std::fs::File;
 use std::marker::PhantomData;
+use std::rc::Rc;
 use std::result::Result;
+use std::slice::Iter;
+use std::str;
+
+use adobe_cmap_parser::{ByteMapping, CIDRange, CodeRange};
+use encoding_rs::UTF_16BE;
+use euclid::*;
+use euclid::vec2;
+use lopdf::*;
+use lopdf::content::Content;
+use lopdf::encryption::DecryptionError;
+use unicode_normalization::UnicodeNormalization;
+
 mod core_fonts;
 mod glyphnames;
 mod zapfglyphnames;
@@ -36,7 +38,8 @@ pub enum OutputError
 {
     FormatError(std::fmt::Error),
     IoError(std::io::Error),
-    PdfError(lopdf::Error)
+    PdfError(lopdf::Error),
+    PageNotFound,
 }
 
 impl std::fmt::Display for OutputError
@@ -45,12 +48,13 @@ impl std::fmt::Display for OutputError
         match self {
             OutputError::FormatError(e) => write!(f, "Formating error: {}", e),
             OutputError::IoError(e) => write!(f, "IO error: {}", e),
-            OutputError::PdfError(e) => write!(f, "PDF error: {}", e)
+            OutputError::PdfError(e) => write!(f, "PDF error: {}", e),
+            OutputError::PageNotFound => write!(f, "Page not found:")
         }
     }
 }
 
-impl std::error::Error for OutputError{}
+impl std::error::Error for OutputError {}
 
 impl From<std::fmt::Error> for OutputError {
     fn from(e: std::fmt::Error) -> Self {
@@ -107,10 +111,10 @@ fn get_pages(doc: &Document) -> &Dictionary {
         &Object::Reference(ref id) => {
             match doc.get_object(*id) {
                 Ok(&Object::Dictionary(ref pages)) => { return pages; }
-                other => {dlog!("pages: {:?}", other)}
+                other => { dlog!("pages: {:?}", other) }
             }
         }
-        other => { dlog!("pages: {:?}", other)}
+        other => { dlog!("pages: {:?}", other) }
     }
     dlog!("catalog {:?}", catalog);
     panic!();
@@ -150,23 +154,25 @@ const PDFDocEncoding: &'static [u16] = &[
 
 fn pdf_to_utf8(s: &[u8]) -> String {
     if s.len() > 2 && s[0] == 0xfe && s[1] == 0xff {
-        return UTF_16BE.decode_without_bom_handling_and_without_replacement(&s[2..]).unwrap().to_string()
+        return UTF_16BE.decode_without_bom_handling_and_without_replacement(&s[2..]).unwrap().to_string();
     } else {
-        let r : Vec<u8> = s.iter().map(|x| *x).flat_map(|x| {
-               let k = PDFDocEncoding[x as usize];
-               vec![(k>>8) as u8, k as u8].into_iter()}).collect();
-        return UTF_16BE.decode_without_bom_handling_and_without_replacement(&r).unwrap().to_string()
+        let r: Vec<u8> = s.iter().map(|x| *x).flat_map(|x| {
+            let k = PDFDocEncoding[x as usize];
+            vec![(k >> 8) as u8, k as u8].into_iter()
+        }).collect();
+        return UTF_16BE.decode_without_bom_handling_and_without_replacement(&r).unwrap().to_string();
     }
 }
 
 fn to_utf8(encoding: &[u16], s: &[u8]) -> String {
     if s.len() > 2 && s[0] == 0xfe && s[1] == 0xff {
-        return UTF_16BE.decode_without_bom_handling_and_without_replacement(&s[2..]).unwrap().to_string()
+        return UTF_16BE.decode_without_bom_handling_and_without_replacement(&s[2..]).unwrap().to_string();
     } else {
-        let r : Vec<u8> = s.iter().map(|x| *x).flat_map(|x| {
+        let r: Vec<u8> = s.iter().map(|x| *x).flat_map(|x| {
             let k = encoding[x as usize];
-            vec![(k>>8) as u8, k as u8].into_iter()}).collect();
-        return UTF_16BE.decode_without_bom_handling_and_without_replacement(&r).unwrap().to_string()
+            vec![(k >> 8) as u8, k as u8].into_iter()
+        }).collect();
+        return UTF_16BE.decode_without_bom_handling_and_without_replacement(&r).unwrap().to_string();
     }
 }
 
@@ -188,13 +194,16 @@ trait FromOptObj<'a> {
 }
 
 // conditionally convert to Self returns None if the conversion failed
-trait FromObj<'a> where Self: std::marker::Sized {
+trait FromObj<'a>
+where
+    Self: std::marker::Sized,
+{
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<Self>;
 }
 
 impl<'a, T: FromObj<'a>> FromOptObj<'a> for Option<T> {
     fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, _key: &[u8]) -> Self {
-        obj.and_then(|x| T::from_obj(doc,x))
+        obj.and_then(|x| T::from_obj(doc, x))
     }
 }
 
@@ -442,13 +451,13 @@ impl<'a> PdfSimpleFont<'a> {
                     for o in differences {
                         let o = maybe_deref(doc, o);
                         match o {
-                            &Object::Integer(i) => { code = i; },
+                            &Object::Integer(i) => { code = i; }
                             &Object::Name(ref n) => {
                                 let name = pdf_to_utf8(&n);
                                 // XXX: names of Type1 fonts can map to arbitrary strings instead of real
                                 // unicode names, so we should probably handle this differently
                                 let unicode = glyphnames::name_to_unicode(&name);
-                                if let Some(unicode) = unicode{
+                                if let Some(unicode) = unicode {
                                     table[code as usize] = unicode;
                                     if let Some(ref mut unicode_map) = unicode_map {
                                         let be = [unicode];
@@ -457,7 +466,7 @@ impl<'a> PdfSimpleFont<'a> {
                                             Entry::Vacant(v) => { v.insert(String::from_utf16(&be).unwrap()); }
                                             Entry::Occupied(e) => {
                                                 if e.get() != &String::from_utf16(&be).unwrap() {
-                                                    let normal_match  = e.get().nfkc().eq(String::from_utf16(&be).unwrap().nfkc());
+                                                    let normal_match = e.get().nfkc().eq(String::from_utf16(&be).unwrap().nfkc());
                                                     println!("Unicode mismatch {} {} {:?} {:?} {:?}", normal_match, name, e.get(), String::from_utf16(&be), be);
                                                 }
                                             }
@@ -594,7 +603,7 @@ impl<'a> PdfSimpleFont<'a> {
         }
 
         let missing_width = get::<Option<f64>>(doc, font, b"MissingWidth").unwrap_or(0.);
-        PdfSimpleFont {doc, font, widths: width_map, encoding: encoding_table, missing_width, unicode_map}
+        PdfSimpleFont { doc, font, widths: width_map, encoding: encoding_table, missing_width, unicode_map }
     }
 
     #[allow(dead_code)]
@@ -622,15 +631,13 @@ impl<'a> PdfSimpleFont<'a> {
 
     #[allow(dead_code)]
     fn get_descriptor(&self) -> Option<PdfFontDescriptor> {
-        maybe_get_obj(self.doc, self.font, b"FontDescriptor").and_then(|desc| desc.as_dict().ok()).map(|desc| PdfFontDescriptor{desc: desc, doc: self.doc})
+        maybe_get_obj(self.doc, self.font, b"FontDescriptor").and_then(|desc| desc.as_dict().ok()).map(|desc| PdfFontDescriptor { desc: desc, doc: self.doc })
     }
 }
 
 
-
 impl<'a> PdfType3Font<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfType3Font<'a> {
-
         let unicode_map = get_unicode_map(doc, font);
         let encoding: Option<&Object> = get(doc, font, b"Encoding");
 
@@ -654,13 +661,13 @@ impl<'a> PdfType3Font<'a> {
                     let mut code = 0;
                     for o in differences {
                         match o {
-                            &Object::Integer(i) => { code = i; },
+                            &Object::Integer(i) => { code = i; }
                             &Object::Name(ref n) => {
                                 let name = pdf_to_utf8(&n);
                                 // XXX: names of Type1 fonts can map to arbitrary strings instead of real
                                 // unicode names, so we should probably handle this differently
                                 let unicode = glyphnames::name_to_unicode(&name);
-                                if let Some(unicode) = unicode{
+                                if let Some(unicode) = unicode {
                                     table[code as usize] = unicode;
                                 }
                                 dlog!("{} = {} ({:?})", code, name, unicode);
@@ -699,7 +706,7 @@ impl<'a> PdfType3Font<'a> {
             i += 1;
         }
         assert_eq!(first_char + i - 1, last_char);
-        PdfType3Font {doc, font, widths: width_map, encoding: encoding_table, unicode_map}
+        PdfType3Font { doc, font, widths: width_map, encoding: encoding_table, unicode_map }
     }
 }
 
@@ -718,27 +725,25 @@ impl<'a> Iterator for PdfFontIter<'a> {
     }
 }
 
-trait PdfFont : Debug {
+trait PdfFont: Debug {
     fn get_width(&self, id: CharCode) -> f64;
     fn next_char(&self, iter: &mut Iter<u8>) -> Option<(CharCode, u8)>;
     fn decode_char(&self, char: CharCode) -> String;
 
-        /*fn char_codes<'a>(&'a self, chars: &'a [u8]) -> PdfFontIter {
-            let p = self;
-            PdfFontIter{i: chars.iter(), font: p as &PdfFont}
-        }*/
-
+    /*fn char_codes<'a>(&'a self, chars: &'a [u8]) -> PdfFontIter {
+        let p = self;
+        PdfFontIter{i: chars.iter(), font: p as &PdfFont}
+    }*/
 }
 
 impl<'a> dyn PdfFont + 'a {
     fn char_codes(&'a self, chars: &'a [u8]) -> PdfFontIter {
-        PdfFontIter{i: chars.iter(), font: self}
+        PdfFontIter { i: chars.iter(), font: self }
     }
     fn decode(&self, chars: &[u8]) -> String {
         let strings = self.char_codes(chars).map(|x| self.decode_char(x.0)).collect::<Vec<_>>();
         strings.join("")
     }
-
 }
 
 
@@ -767,7 +772,7 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
         if let Some(ref unicode_map) = self.unicode_map {
             let s = unicode_map.get(&char);
             let s = match s {
-                None => { 
+                None => {
                     println!("missing char {:?} in unicode map {:?} for {:?}", char, unicode_map, self.font);
                     // some pdf's like http://arxiv.org/pdf/2312.00064v1 are missing entries in their unicode map but do have
                     // entries in the encoding.
@@ -778,7 +783,7 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
                 }
                 Some(s) => { s.clone() }
             };
-            return s
+            return s;
         }
         let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
         //dlog!("char_code {:?} {:?}", char, self.encoding);
@@ -786,7 +791,6 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
         s
     }
 }
-
 
 
 impl<'a> fmt::Debug for PdfSimpleFont<'a> {
@@ -817,10 +821,10 @@ impl<'a> PdfFont for PdfType3Font<'a> {
         if let Some(ref unicode_map) = self.unicode_map {
             let s = unicode_map.get(&char);
             let s = match s {
-                None => { panic!("missing char {:?} in map {:?}", char, unicode_map)}
+                None => { panic!("missing char {:?} in map {:?}", char, unicode_map) }
                 Some(s) => { s.clone() }
             };
-            return s
+            return s;
         }
         let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
         //dlog!("char_code {:?} {:?}", char, self.encoding);
@@ -828,7 +832,6 @@ impl<'a> PdfFont for PdfType3Font<'a> {
         s
     }
 }
-
 
 
 impl<'a> fmt::Debug for PdfType3Font<'a> {
@@ -867,11 +870,11 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
                 let mut i = 0;
                 assert!(v.len() % 2 == 0);
                 while i < v.len() {
-                    be.push(((v[i] as u16) << 8) | v[i+1] as u16);
+                    be.push(((v[i] as u16) << 8) | v[i + 1] as u16);
                     i += 2;
                 }
                 match &be[..] {
-                    [0xd800 ..= 0xdfff] => {
+                    [0xd800..=0xdfff] => {
                         // this range is not specified as not being encoded
                         // we ignore them so we don't an error from from_utt16
                         continue;
@@ -886,14 +889,14 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
 
             dlog!("map: {:?}", unicode_map);
         }
-        None => { }
+        None => {}
         Some(&Object::Name(ref name)) => {
             let name = pdf_to_utf8(name);
             if name != "Identity-H" {
                 todo!("unsupported ToUnicode name: {:?}", name);
             }
         }
-        _ => { panic!("unsupported cmap {:?}", to_unicode)}
+        _ => { panic!("unsupported cmap {:?}", to_unicode) }
     }
     unicode_map
 }
@@ -912,14 +915,14 @@ impl<'a> PdfCIDFont<'a> {
                 let name = pdf_to_utf8(name);
                 dlog!("encoding {:?}", name);
                 assert!(name == "Identity-H");
-                ByteMapping { codespace: vec![CodeRange{width: 2, start: 0, end: 0xffff }], cid: vec![CIDRange{ src_code_lo: 0, src_code_hi: 0xffff, dst_CID_lo: 0 }]}
+                ByteMapping { codespace: vec![CodeRange { width: 2, start: 0, end: 0xffff }], cid: vec![CIDRange { src_code_lo: 0, src_code_hi: 0xffff, dst_CID_lo: 0 }] }
             }
             &Object::Stream(ref stream) => {
                 let contents = get_contents(stream);
                 dlog!("Stream: {}", String::from_utf8(contents.clone()).unwrap());
                 adobe_cmap_parser::get_byte_mapping(&contents).unwrap()
             }
-            _ => { panic!("unsupported encoding {:?}", encoding)}
+            _ => { panic!("unsupported encoding {:?}", encoding) }
         };
 
         // Sometimes a Type0 font might refer to the same underlying data as regular font. In this case we may be able to extract some encoding
@@ -941,12 +944,12 @@ impl<'a> PdfCIDFont<'a> {
         let mut i = 0;
         if let Some(w) = w {
             while i < w.len() {
-                if let &Object::Array(ref wa) = w[i+1] {
+                if let &Object::Array(ref wa) = w[i + 1] {
                     let cid = w[i].as_i64().expect("id should be num");
                     let mut j = 0;
                     dlog!("wa: {:?} -> {:?}", cid, wa);
                     for w in wa {
-                        widths.insert((cid + j) as CharCode, as_num(w) );
+                        widths.insert((cid + j) as CharCode, as_num(w));
                         j += 1;
                     }
                     i += 2;
@@ -961,7 +964,7 @@ impl<'a> PdfCIDFont<'a> {
                 }
             }
         }
-        PdfCIDFont{doc, font, widths, to_unicode: unicode_map, encoding, default_width: Some(default_width as f64) }
+        PdfCIDFont { doc, font, widths, to_unicode: unicode_map, encoding, default_width: Some(default_width as f64) }
     }
 }
 
@@ -1024,11 +1027,10 @@ impl<'a> fmt::Debug for PdfCIDFont<'a> {
 }
 
 
-
 #[derive(Copy, Clone)]
 struct PdfFontDescriptor<'a> {
     desc: &'a Dictionary,
-    doc: &'a Document
+    doc: &'a Document,
 }
 
 impl<'a> PdfFontDescriptor<'a> {
@@ -1072,7 +1074,6 @@ impl Type0Func {
     fn eval(&self, _input: &[f64], _output: &mut [f64]) {
         let _n_inputs = self.domain.len() / 2;
         let _n_ouputs = self.range.len() / 2;
-
     }
 }
 
@@ -1090,7 +1091,7 @@ enum Function {
     #[allow(dead_code)]
     Type3,
     #[allow(dead_code)]
-    Type4
+    Type4,
 }
 
 impl Function {
@@ -1131,7 +1132,7 @@ impl Function {
                 let c0 = get::<Option<Vec<f64>>>(doc, dict, b"C0");
                 let c1 = get::<Option<Vec<f64>>>(doc, dict, b"C1");
                 let n = get::<f64>(doc, dict, b"N");
-                Function::Type2(Type2Func { c0, c1, n})
+                Function::Type2(Type2Func { c0, c1, n })
             }
             _ => { panic!("unhandled function type {}", function_type) }
         };
@@ -1163,7 +1164,7 @@ struct TextState<'a>
 // XXX: We'd ideally implement this without having to copy the uncompressed data
 fn get_contents(contents: &Stream) -> Vec<u8> {
     if contents.filter().is_ok() {
-        contents.decompressed_content().unwrap_or_else(|_|contents.content.clone())
+        contents.decompressed_content().unwrap_or_else(|_| contents.content.clone())
     } else {
         contents.content.clone()
     }
@@ -1197,11 +1198,11 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
     for (c, length) in font.char_codes(s) {
         // 5.3.3 Text Space Details
         let tsm = Transform2D::row_major(ts.horizontal_scaling,
-                                                 0.,
-                                                 0.,
-                                                 1.0,
-                                                 0.,
-                                                 ts.rise);
+                                         0.,
+                                         0.,
+                                         1.0,
+                                         0.,
+                                         ts.rise);
         // Trm = Tsm × Tm × CTM
         let trm = tsm.post_transform(&ts.tm.post_transform(&gs.ctm));
         //dlog!("ctm: {:?} tm {:?}", gs.ctm, tm);
@@ -1223,13 +1224,12 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
         output.output_character(&trm, w0, spacing, ts.font_size, &font.decode_char(c))?;
         let tj = 0.;
         let ty = 0.;
-        let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + spacing);
+        let tx = ts.horizontal_scaling * ((w0 - tj / 1000.) * ts.font_size + spacing);
         dlog!("horizontal {} adjust {} {} {} {}", ts.horizontal_scaling, tx, w0, ts.font_size, spacing);
         // dlog!("w0: {}, tx: {}", w0, tx);
         ts.tm = ts.tm.pre_transform(&Transform2D::create_translation(tx, ty));
         let _trm = ts.tm.pre_transform(&gs.ctm);
         //dlog!("post pos: {:?}", trm);
-
     }
     output.end_word()?;
     Ok(())
@@ -1240,36 +1240,39 @@ pub struct MediaBox {
     pub llx: f64,
     pub lly: f64,
     pub urx: f64,
-    pub ury: f64
+    pub ury: f64,
 }
 
 fn apply_state(doc: &Document, gs: &mut GraphicsState, state: &Dictionary) {
     for (k, v) in state.iter() {
-        let k : &[u8] = k.as_ref();
+        let k: &[u8] = k.as_ref();
         match k {
-            b"SMask" => { match maybe_deref(doc, v)  {
-                &Object::Name(ref name) => {
-                    if name == b"None" {
-                        gs.smask = None;
-                    } else {
-                        panic!("unexpected smask name")
+            b"SMask" => {
+                match maybe_deref(doc, v) {
+                    &Object::Name(ref name) => {
+                        if name == b"None" {
+                            gs.smask = None;
+                        } else {
+                            panic!("unexpected smask name")
+                        }
                     }
+                    &Object::Dictionary(ref dict) => {
+                        gs.smask = Some(dict.clone());
+                    }
+                    _ => { panic!("unexpected smask type {:?}", v) }
                 }
-                &Object::Dictionary(ref dict) => {
-                    gs.smask = Some(dict.clone());
+            }
+            b"Type" => {
+                match v {
+                    &Object::Name(ref name) => {
+                        assert_eq!(name, b"ExtGState")
+                    }
+                    _ => { panic!("unexpected type") }
                 }
-                _ => { panic!("unexpected smask type {:?}", v) }
-            }}
-            b"Type" => { match v {
-                &Object::Name(ref name) => {
-                    assert_eq!(name, b"ExtGState")
-                }
-                _ => { panic!("unexpected type") }
-            }}
-            _ => {  dlog!("unapplied state: {:?} {:?}", k, v); }
+            }
+            _ => { dlog!("unapplied state: {:?} {:?}", k, v); }
         }
     }
-
 }
 
 #[derive(Debug)]
@@ -1284,7 +1287,7 @@ pub enum PathOp {
 
 #[derive(Debug)]
 pub struct Path {
-    pub ops: Vec<PathOp>
+    pub ops: Vec<PathOp>,
 }
 
 impl Path {
@@ -1313,7 +1316,7 @@ pub struct CalRGB {
     white_point: [f64; 3],
     black_point: Option<[f64; 3]>,
     gamma: Option<[f64; 3]>,
-    matrix: Option<Vec<f64>>
+    matrix: Option<Vec<f64>>,
 }
 
 #[derive(Clone, Debug)]
@@ -1331,7 +1334,7 @@ pub enum AlternateColorSpace {
     CalRGB(CalRGB),
     CalGray(CalGray),
     Lab(Lab),
-    ICCBased(Vec<u8>)
+    ICCBased(Vec<u8>),
 }
 
 #[derive(Clone)]
@@ -1351,7 +1354,7 @@ pub enum ColorSpace {
     CalGray(CalGray),
     Lab(Lab),
     Separation(Separation),
-    ICCBased(Vec<u8>)
+    ICCBased(Vec<u8>),
 }
 
 fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary) -> ColorSpace {
@@ -1419,7 +1422,7 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                         let tint_transform = Box::new(Function::new(doc, maybe_deref(doc, &cs[3])));
 
                         dlog!("{:?} {:?} {:?}", name, alternate_space, tint_transform);
-                        ColorSpace::Separation(Separation{ name, alternate_space, tint_transform})
+                        ColorSpace::Separation(Separation { name, alternate_space, tint_transform })
                     }
                     "ICCBased" => {
                         let stream = maybe_deref(doc, &cs[1]).as_stream().unwrap();
@@ -1454,7 +1457,7 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                     }
                     "Pattern" => {
                         ColorSpace::Pattern
-                    },
+                    }
                     "DeviceGray" => ColorSpace::DeviceGray,
                     "DeviceRGB" => ColorSpace::DeviceRGB,
                     "DeviceCMYK" => ColorSpace::DeviceCMYK,
@@ -1476,7 +1479,7 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
 }
 
 struct Processor<'a> {
-    _none: PhantomData<&'a ()>
+    _none: PhantomData<&'a ()>,
 }
 
 impl<'a> Processor<'a> {
@@ -1504,7 +1507,7 @@ impl<'a> Processor<'a> {
             stroke_colorspace: ColorSpace::DeviceGray,
             line_width: 1.,
             ctm: Transform2D::identity(),
-            smask: None
+            smask: None,
         };
         //let mut ts = &mut gs.ts;
         let mut gs_stack = Vec::new();
@@ -1547,13 +1550,19 @@ impl<'a> Processor<'a> {
                 }
                 "SC" | "SCN" => {
                     gs.stroke_color = match gs.stroke_colorspace {
-                        ColorSpace::Pattern => { dlog!("unhandled pattern color"); Vec::new() }
+                        ColorSpace::Pattern => {
+                            dlog!("unhandled pattern color");
+                            Vec::new()
+                        }
                         _ => { operation.operands.iter().map(|x| as_num(x)).collect() }
                     };
                 }
                 "sc" | "scn" => {
                     gs.fill_color = match gs.fill_colorspace {
-                        ColorSpace::Pattern => { dlog!("unhandled pattern color"); Vec::new() }
+                        ColorSpace::Pattern => {
+                            dlog!("unhandled pattern color");
+                            Vec::new()
+                        }
                         _ => { operation.operands.iter().map(|x| as_num(x)).collect() }
                     };
                 }
@@ -1704,7 +1713,7 @@ impl<'a> Processor<'a> {
                 }
                 "i" => { dlog!("unhandled graphics state flattness operator {:?}", operation); }
                 "w" => { gs.line_width = as_num(&operation.operands[0]); }
-                "J" | "j" | "M" | "d" | "ri"  => { dlog!("unknown graphics state operator {:?}", operation); }
+                "J" | "j" | "M" | "d" | "ri" => { dlog!("unknown graphics state operator {:?}", operation); }
                 "m" => { path.ops.push(PathOp::MoveTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) }
                 "l" => { path.ops.push(PathOp::LineTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) }
                 "c" => {
@@ -1775,7 +1784,6 @@ impl<'a> Processor<'a> {
                     self.process_stream(&doc, contents, resources, &media_box, output, page_num)?;
                 }
                 _ => { dlog!("unknown operation {:?}", operation); }
-
             }
         }
         Ok(())
@@ -1784,24 +1792,24 @@ impl<'a> Processor<'a> {
 
 
 pub trait OutputDev {
-    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, art_box: Option<(f64, f64, f64, f64)>)-> Result<(), OutputError>;
-    fn end_page(&mut self)-> Result<(), OutputError>;
+    fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, art_box: Option<(f64, f64, f64, f64)>) -> Result<(), OutputError>;
+    fn end_page(&mut self) -> Result<(), OutputError>;
     fn output_character(&mut self, trm: &Transform, width: f64, spacing: f64, font_size: f64, char: &str) -> Result<(), OutputError>;
-    fn begin_word(&mut self)-> Result<(), OutputError>;
-    fn end_word(&mut self)-> Result<(), OutputError>;
-    fn end_line(&mut self)-> Result<(), OutputError>;
-    fn stroke(&mut self, _ctm: &Transform, _colorspace: &ColorSpace, _color: &[f64], _path: &Path)-> Result<(), OutputError> {Ok(())}
-    fn fill(&mut self, _ctm: &Transform, _colorspace: &ColorSpace, _color: &[f64], _path: &Path)-> Result<(), OutputError> {Ok(())}
+    fn begin_word(&mut self) -> Result<(), OutputError>;
+    fn end_word(&mut self) -> Result<(), OutputError>;
+    fn end_line(&mut self) -> Result<(), OutputError>;
+    fn stroke(&mut self, _ctm: &Transform, _colorspace: &ColorSpace, _color: &[f64], _path: &Path) -> Result<(), OutputError> { Ok(()) }
+    fn fill(&mut self, _ctm: &Transform, _colorspace: &ColorSpace, _color: &[f64], _path: &Path) -> Result<(), OutputError> { Ok(()) }
 }
 
 
-pub struct HTMLOutput<'a>  {
+pub struct HTMLOutput<'a> {
     file: &'a mut dyn std::io::Write,
     flip_ctm: Transform,
     last_ctm: Transform,
     buf_ctm: Transform,
     buf_font_size: f64,
-    buf: String
+    buf: String,
 }
 
 fn insert_nbsp(input: &str) -> String {
@@ -1835,15 +1843,14 @@ impl<'a> HTMLOutput<'a> {
             buf_font_size: 0.,
         }
     }
-    fn flush_string(&mut self) -> Result<(), OutputError>{
+    fn flush_string(&mut self) -> Result<(), OutputError> {
         if self.buf.len() != 0 {
-
             let position = self.buf_ctm.post_transform(&self.flip_ctm);
             let transformed_font_size_vec = self.buf_ctm.transform_vector(vec2(self.buf_font_size, self.buf_font_size));
             // get the length of one sized of the square with the same area with a rectangle of size (x, y)
             let transformed_font_size = (transformed_font_size_vec.x * transformed_font_size_vec.y).sqrt();
             let (x, y) = (position.m31, position.m32);
-            println!("flush {} {:?}", self.buf, (x,y));
+            println!("flush {} {:?}", self.buf, (x, y));
 
             write!(self.file, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>\n",
                    x, y, transformed_font_size, insert_nbsp(&self.buf))?;
@@ -1869,12 +1876,12 @@ impl<'a> OutputDev for HTMLOutput<'a> {
         write!(self.file, "</div>")?;
         Ok(())
     }
-    fn output_character(&mut self, trm: &Transform, width: f64, spacing: f64, font_size: f64, char: &str) -> Result<(), OutputError>{
+    fn output_character(&mut self, trm: &Transform, width: f64, spacing: f64, font_size: f64, char: &str) -> Result<(), OutputError> {
         if trm.approx_eq(&self.last_ctm) {
             let position = trm.post_transform(&self.flip_ctm);
             let (x, y) = (position.m31, position.m32);
 
-            println!("accum {} {:?}", char, (x,y));
+            println!("accum {} {:?}", char, (x, y));
             self.buf += char;
         } else {
             println!("flush {} {:?} {:?} {} {} {}", char, trm, self.last_ctm, width, font_size, spacing);
@@ -1894,17 +1901,17 @@ impl<'a> OutputDev for HTMLOutput<'a> {
 
         Ok(())
     }
-    fn begin_word(&mut self) -> Result<(), OutputError> {Ok(())}
-    fn end_word(&mut self) -> Result<(), OutputError> {Ok(())}
-    fn end_line(&mut self) -> Result<(), OutputError> {Ok(())}
+    fn begin_word(&mut self) -> Result<(), OutputError> { Ok(()) }
+    fn end_word(&mut self) -> Result<(), OutputError> { Ok(()) }
+    fn end_line(&mut self) -> Result<(), OutputError> { Ok(()) }
 }
 
-pub struct SVGOutput<'a>  {
-    file: &'a mut dyn std::io::Write
+pub struct SVGOutput<'a> {
+    file: &'a mut dyn std::io::Write,
 }
 impl<'a> SVGOutput<'a> {
     pub fn new(file: &mut dyn std::io::Write) -> SVGOutput {
-        SVGOutput{file}
+        SVGOutput { file }
     }
 }
 
@@ -1941,18 +1948,18 @@ impl<'a> OutputDev for SVGOutput<'a> {
         )?;
         Ok(())
     }
-    fn end_page(&mut self) -> Result<(), OutputError>{
+    fn end_page(&mut self) -> Result<(), OutputError> {
         write!(self.file, "</g>\n")?;
         write!(self.file, "</svg>")?;
         Ok(())
     }
-    fn output_character(&mut self, _trm: &Transform, _width: f64, _spacing: f64, _font_size: f64, _char: &str) -> Result<(), OutputError>{
+    fn output_character(&mut self, _trm: &Transform, _width: f64, _spacing: f64, _font_size: f64, _char: &str) -> Result<(), OutputError> {
         Ok(())
     }
-    fn begin_word(&mut self) -> Result<(), OutputError> {Ok(())}
-    fn end_word(&mut self) -> Result<(), OutputError> {Ok(())}
-    fn end_line(&mut self) -> Result<(), OutputError> {Ok(())}
-    fn fill(&mut self, ctm: &Transform, _colorspace: &ColorSpace, _color: &[f64], path: &Path) -> Result<(), OutputError>{
+    fn begin_word(&mut self) -> Result<(), OutputError> { Ok(()) }
+    fn end_word(&mut self) -> Result<(), OutputError> { Ok(()) }
+    fn end_line(&mut self) -> Result<(), OutputError> { Ok(()) }
+    fn fill(&mut self, ctm: &Transform, _colorspace: &ColorSpace, _color: &[f64], path: &Path) -> Result<(), OutputError> {
         write!(self.file, "<g transform='matrix({}, {}, {}, {}, {}, {})'>",
                ctm.m11,
                ctm.m12,
@@ -1972,10 +1979,10 @@ impl<'a> OutputDev for SVGOutput<'a> {
         let mut d = Vec::new();
         for op in &path.ops {
             match op {
-                &PathOp::MoveTo(x, y) => { d.push(format!("M{} {}", x, y))}
-                &PathOp::LineTo(x, y) => { d.push(format!("L{} {}", x, y))},
-                &PathOp::CurveTo(x1, y1, x2, y2, x, y) => { d.push(format!("C{} {} {} {} {} {}", x1, y1, x2, y2, x, y))},
-                &PathOp::Close => { d.push(format!("Z"))},
+                &PathOp::MoveTo(x, y) => { d.push(format!("M{} {}", x, y)) }
+                &PathOp::LineTo(x, y) => { d.push(format!("L{} {}", x, y)) }
+                &PathOp::CurveTo(x1, y1, x2, y2, x, y) => { d.push(format!("C{} {} {} {} {} {}", x1, y1, x2, y2, x, y)) }
+                &PathOp::Close => { d.push(format!("Z")) }
                 &PathOp::Rect(x, y, width, height) => {
                     d.push(format!("M{} {}", x, y));
                     d.push(format!("L{} {}", x + width, y));
@@ -1983,7 +1990,6 @@ impl<'a> OutputDev for SVGOutput<'a> {
                     d.push(format!("L{} {}", x, y + height));
                     d.push(format!("Z"));
                 }
-
             }
         }
         write!(self.file, "<path d='{}' />", d.join(" "))?;
@@ -2035,7 +2041,7 @@ impl<'a> ConvertToFmt for &'a mut File {
     }
 }
 
-pub struct PlainTextOutput<W: ConvertToFmt>   {
+pub struct PlainTextOutput<W: ConvertToFmt> {
     writer: W::Writer,
     last_end: f64,
     last_y: f64,
@@ -2045,7 +2051,7 @@ pub struct PlainTextOutput<W: ConvertToFmt>   {
 
 impl<W: ConvertToFmt> PlainTextOutput<W> {
     pub fn new(writer: W) -> PlainTextOutput<W> {
-        PlainTextOutput{
+        PlainTextOutput {
             writer: writer.convert(),
             last_end: 100000.,
             first_char: false,
@@ -2069,7 +2075,7 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
         let position = trm.post_transform(&self.flip_ctm);
         let transformed_font_size_vec = trm.transform_vector(vec2(font_size, font_size));
         // get the length of one sized of the square with the same area with a rectangle of size (x, y)
-        let transformed_font_size = (transformed_font_size_vec.x*transformed_font_size_vec.y).sqrt();
+        let transformed_font_size = (transformed_font_size_vec.x * transformed_font_size_vec.y).sqrt();
         let (x, y) = (position.m31, position.m32);
         use std::fmt::Write;
         //dlog!("last_end: {} x: {}, width: {}", self.last_end, x, width);
@@ -2099,8 +2105,8 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
         self.first_char = true;
         Ok(())
     }
-    fn end_word(&mut self) -> Result<(), OutputError> {Ok(())}
-    fn end_line(&mut self) -> Result<(), OutputError>{
+    fn end_word(&mut self) -> Result<(), OutputError> { Ok(()) }
+    fn end_line(&mut self) -> Result<(), OutputError> {
         //write!(self.file, "\n");
         Ok(())
     }
@@ -2122,18 +2128,6 @@ pub fn print_metadata(doc: &Document) {
     dlog!("Type: {:?}", get_pages(&doc).get(b"Type").and_then(|x| x.as_name()).unwrap());
 }
 
-/// Load a pdf from a file at `path` and return a `Document`
-
-pub fn load_document<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<Document, OutputError> {
-    let doc = Document::load(path)?;
-    Ok(doc)
-}
-
-pub fn load_document_from_mem(buffer: &[u8]) -> Result<Document, OutputError> {
-    let doc = Document::load_mem(buffer)?;
-    Ok(doc)
-}
-
 
 /// Extract the text from a pdf at `path` and return a `String` with the results
 pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<String, OutputError> {
@@ -2148,7 +2142,7 @@ pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<
 }
 
 fn maybe_decrypt(doc: &mut Document) -> Result<(), OutputError> {
-    if ! doc.is_encrypted() {
+    if !doc.is_encrypted() {
         return Ok(());
     }
 
@@ -2200,7 +2194,10 @@ pub fn extract_text_from_mem_encrypted<PW: AsRef<[u8]>>(
     Ok(s)
 }
 
-pub fn extract_text_by_page(doc: &Document, page_num: u32) -> Result<String, OutputError> {
+
+/// Extract the text from a pdf at `path` at page `page_num` and return a `String` with the results
+
+fn extract_text_by_page(doc: &Document, page_num: u32) -> Result<String, OutputError> {
     let mut s = String::new();
     {
         let mut output = PlainTextOutput::new(&mut s);
@@ -2209,13 +2206,58 @@ pub fn extract_text_by_page(doc: &Document, page_num: u32) -> Result<String, Out
     Ok(s)
 }
 
-pub fn extract_text_by_page_encrypted<PW: AsRef<[u8]>>(doc: &mut Document, page_num: u32, password: PW,) -> Result<String, OutputError> {
-    let mut s = String::new();
+/// Extract the text from a pdf at `path` and return a `Vec<String>` with the results separately by page
+
+pub fn extract_text_by_pages<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<Vec<String>, OutputError> {
+    let mut v = Vec::new();
     {
-        let mut output = PlainTextOutput::new(&mut s);
-        output_doc_page_encrypted(doc, &mut output, page_num, password)?;
+        let mut doc = Document::load(path)?;
+        maybe_decrypt(&mut doc)?;
+        let page_num = 0;
+        while let Ok(content) = extract_text_by_page(&doc, page_num) {
+            v.push(content);
+        }
     }
-    Ok(s)
+    Ok(v)
+}
+
+pub fn extract_text_by_pages_encrypted<P: std::convert::AsRef<std::path::Path>, PW: AsRef<[u8]>>(path: P, password: PW) -> Result<Vec<String>, OutputError> {
+    let mut v = Vec::new();
+    {
+        let mut doc = Document::load(path)?;
+        doc.decrypt(password)?;
+        let page_num = 0;
+        while let Ok(content) = extract_text_by_page(&mut doc, page_num) {
+            v.push(content);
+        }
+    }
+    Ok(v)
+}
+
+pub fn extract_text_from_mem_by_pages(buffer: &[u8]) -> Result<Vec<String>, OutputError> {
+    let mut v = Vec::new();
+    {
+        let mut doc = Document::load_mem(buffer)?;
+        maybe_decrypt(&mut doc)?;
+        let page_num = 0;
+        while let Ok(content) = extract_text_by_page(&doc, page_num) {
+            v.push(content);
+        }
+    }
+    Ok(v)
+}
+
+pub fn extract_text_from_mem_by_pages_encrypted<PW: AsRef<[u8]>>(buffer: &[u8], password: PW) -> Result<Vec<String>, OutputError> {
+    let mut v = Vec::new();
+    {
+        let mut doc = Document::load_mem(buffer)?;
+        doc.decrypt(password)?;
+        let page_num = 0;
+        while let Ok(content) = extract_text_by_page(&doc, page_num) {
+            v.push(content);
+        }
+    }
+    Ok(v)
 }
 
 
@@ -2239,29 +2281,18 @@ pub fn output_doc_encrypted<PW: AsRef<[u8]>>(
     doc.decrypt(password)?;
     output_doc(doc, output)
 }
-
-pub fn output_doc_page_encrypted<PW: AsRef<[u8]>>(
-    doc: &mut Document,
-    output: &mut dyn OutputDev,
-    page_num: u32,
-    password: PW,
-) -> Result<(), OutputError> {
-    doc.decrypt(password)?;
-    output_doc_page(doc, output, page_num)
-}
-
 /// Parse a given document and output it to `output`
 pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), OutputError> {
     if doc.is_encrypted() {
         eprintln!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
     }
-
+    let empty_resources = Dictionary::new();
     let pages = doc.get_pages();
     let mut p = Processor::new();
     for dict in pages {
         let page_num = dict.0;
         let object_id = dict.1;
-        output_doc_inner(page_num, object_id, doc, &mut p, output)?;
+        output_doc_inner(page_num, object_id, doc, &mut p, output, &empty_resources)?;
     }
     Ok(())
 }
@@ -2270,18 +2301,18 @@ pub fn output_doc_page(doc: &Document, output: &mut dyn OutputDev, page_num: u32
     if doc.is_encrypted() {
         eprintln!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
     }
+    let empty_resources = Dictionary::new();
+    let pages = doc.get_pages();
+    let object_id = pages.get(&page_num).ok_or(OutputError::PageNotFound)?;
 
-    if let Some(object_id) = doc.get_pages().get(&page_num) {
-        let mut p = Processor::new();
-        output_doc_inner(page_num, *object_id, doc, &mut p, output)?;
-    }
+    let mut p = Processor::new();
+    output_doc_inner(page_num, *object_id, doc, &mut p, output, &empty_resources)?;
 
     Ok(())
 }
 
 
-fn output_doc_inner(page_num: u32, object_id: ObjectId, doc: &Document, p: &mut Processor,output: &mut dyn OutputDev) -> Result<(), OutputError> {
-    let empty_resources = &Dictionary::new();
+fn output_doc_inner<'a>(page_num: u32, object_id: ObjectId, doc: &'a Document, p: & mut Processor<'a>, output: &mut dyn OutputDev, empty_resources: &'a Dictionary) -> Result<(), OutputError> {
     let page_dict = doc.get_object(object_id).unwrap().as_dict().unwrap();
     dlog!("page {} {:?}", page_num, page_dict);
     // XXX: Some pdfs lack a Resources directory
@@ -2297,7 +2328,7 @@ fn output_doc_inner(page_num: u32, object_id: ObjectId, doc: &Document, p: &mut 
 
     output.begin_page(page_num, &media_box, art_box)?;
 
-    p.process_stream(&doc, doc.get_page_content(object_id).unwrap(), resources,&media_box, output, page_num)?;
+    p.process_stream(&doc, doc.get_page_content(object_id).unwrap(), resources, &media_box, output, page_num)?;
 
     output.end_page()?;
     Ok(())
