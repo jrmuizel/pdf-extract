@@ -494,8 +494,12 @@ impl<'a> PdfSimpleFont<'a> {
                         }
                     }
                 }
-                let name = pdf_to_utf8(encoding.get(b"Type").unwrap().as_name().unwrap());
-                dlog!("name: {}", name);
+                let name_encoded = encoding.get(b"Type");
+                if let Ok(Object::Name(name)) = name_encoded {
+                    dlog!("name: {}", pdf_to_utf8(name));
+                } else {
+                    dlog!("name not found");
+                }
 
                 encoding_table = Some(table);
             }
