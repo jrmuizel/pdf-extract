@@ -3,7 +3,7 @@ extern crate lopdf;
 use adobe_cmap_parser::{ByteMapping, CodeRange, CIDRange};
 use encoding_rs::UTF_16BE;
 use lopdf::content::Content;
-use lopdf::*;
+pub use lopdf::*;
 use euclid::*;
 use lopdf::encryption::DecryptionError;
 use std::fmt::{Debug, Formatter};
