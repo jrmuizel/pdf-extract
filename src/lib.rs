@@ -768,7 +768,7 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
         if let Some(ref unicode_map) = self.unicode_map {
             let s = unicode_map.get(&char);
             let s = match s {
-                None => { 
+                None => {
                     println!("missing char {:?} in unicode map {:?} for {:?}", char, unicode_map, self.font);
                     // some pdf's like http://arxiv.org/pdf/2312.00064v1 are missing entries in their unicode map but do have
                     // entries in the encoding.
@@ -2188,6 +2188,75 @@ pub fn extract_text_from_mem_encrypted<PW: AsRef<[u8]>>(
     Ok(s)
 }
 
+
+fn extract_text_by_page(doc: &Document, page_num: u32) -> Result<String, OutputError> {
+    let mut s = String::new();
+    {
+        let mut output = PlainTextOutput::new(&mut s);
+        output_doc_page(doc, &mut output, page_num)?;
+    }
+    Ok(s)
+}
+
+/// Extract the text from a pdf at `path` and return a `Vec<String>` with the results separately by page
+
+pub fn extract_text_by_pages<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<Vec<String>, OutputError> {
+    let mut v = Vec::new();
+    {
+        let mut doc = Document::load(path)?;
+        maybe_decrypt(&mut doc)?;
+        let mut page_num = 1;
+        while let Ok(content) = extract_text_by_page(&doc, page_num) {
+            v.push(content);
+            page_num += 1;
+        }
+    }
+    Ok(v)
+}
+
+pub fn extract_text_by_pages_encrypted<P: std::convert::AsRef<std::path::Path>, PW: AsRef<[u8]>>(path: P, password: PW) -> Result<Vec<String>, OutputError> {
+    let mut v = Vec::new();
+    {
+        let mut doc = Document::load(path)?;
+        doc.decrypt(password)?;
+        let mut page_num = 1;
+        while let Ok(content) = extract_text_by_page(&mut doc, page_num) {
+            v.push(content);
+            page_num += 1;
+        }
+    }
+    Ok(v)
+}
+
+pub fn extract_text_from_mem_by_pages(buffer: &[u8]) -> Result<Vec<String>, OutputError> {
+    let mut v = Vec::new();
+    {
+        let mut doc = Document::load_mem(buffer)?;
+        maybe_decrypt(&mut doc)?;
+        let mut page_num = 1;
+        while let Ok(content) = extract_text_by_page(&doc, page_num) {
+            v.push(content);
+            page_num += 1;
+        }
+    }
+    Ok(v)
+}
+
+pub fn extract_text_from_mem_by_pages_encrypted<PW: AsRef<[u8]>>(buffer: &[u8], password: PW) -> Result<Vec<String>, OutputError> {
+    let mut v = Vec::new();
+    {
+        let mut doc = Document::load_mem(buffer)?;
+        doc.decrypt(password)?;
+        let mut page_num = 1;
+        while let Ok(content) = extract_text_by_page(&doc, page_num) {
+            v.push(content);
+            page_num += 1;
+        }
+    }
+    Ok(v)
+}
+
+
 fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<T> {
     let o: Option<T> = get(doc, dict, key);
     if let Some(o) = o {
@@ -2214,30 +2283,42 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), Outp
     if doc.is_encrypted() {
         eprintln!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
     }
-    let empty_resources = &Dictionary::new();
-
+    let empty_resources = Dictionary::new();
     let pages = doc.get_pages();
     let mut p = Processor::new();
     for dict in pages {
         let page_num = dict.0;
-        let page_dict = doc.get_object(dict.1).unwrap().as_dict().unwrap();
-        dlog!("page {} {:?}", page_num, page_dict);
-        // XXX: Some pdfs lack a Resources directory
-        let resources = get_inherited(doc, page_dict, b"Resources").unwrap_or(empty_resources);
-        dlog!("resources {:?}", resources);
-
-        // pdfium searches up the page tree for MediaBoxes as needed
-        let media_box: Vec<f64> = get_inherited(doc, page_dict, b"MediaBox").expect("MediaBox");
-        let media_box = MediaBox { llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3] };
-
-        let art_box = get::<Option<Vec<f64>>>(&doc, page_dict, b"ArtBox")
-            .map(|x| (x[0], x[1], x[2], x[3]));
-
-        output.begin_page(page_num, &media_box, art_box)?;
-
-        p.process_stream(&doc, doc.get_page_content(dict.1).unwrap(), resources,&media_box, output, page_num)?;
-
-        output.end_page()?;
+        let object_id = dict.1;
+        output_doc_inner(page_num, object_id, doc, &mut p, output, &empty_resources)?;
     }
+    Ok(())
+}
+
+pub fn output_doc_page(doc: &Document, output: &mut dyn OutputDev, page_num: u32) -> Result<(), OutputError> {
+    if doc.is_encrypted() {
+        eprintln!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
+    }
+    let empty_resources = Dictionary::new();
+    let pages = doc.get_pages();
+    let object_id = pages.get(&page_num).ok_or(lopdf::Error::PageNumberNotFound(page_num))?;
+    let mut p = Processor::new();
+    output_doc_inner(page_num, *object_id, doc, &mut p, output, &empty_resources)?;
+    Ok(())
+}
+
+fn output_doc_inner<'a>(page_num: u32, object_id: ObjectId, doc: &'a Document, p: & mut Processor<'a>, output: &mut dyn OutputDev, empty_resources: &'a Dictionary) -> Result<(), OutputError> {
+    let page_dict = doc.get_object(object_id).unwrap().as_dict().unwrap();
+    dlog!("page {} {:?}", page_num, page_dict);
+    // XXX: Some pdfs lack a Resources directory
+    let resources = get_inherited(doc, page_dict, b"Resources").unwrap_or(empty_resources);
+    dlog!("resources {:?}", resources);
+    // pdfium searches up the page tree for MediaBoxes as needed
+    let media_box: Vec<f64> = get_inherited(doc, page_dict, b"MediaBox").expect("MediaBox");
+    let media_box = MediaBox { llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3] };
+    let art_box = get::<Option<Vec<f64>>>(&doc, page_dict, b"ArtBox")
+        .map(|x| (x[0], x[1], x[2], x[3]));
+    output.begin_page(page_num, &media_box, art_box)?;
+    p.process_stream(&doc, doc.get_page_content(object_id).unwrap(), resources, &media_box, output, page_num)?;
+    output.end_page()?;
     Ok(())
 }
