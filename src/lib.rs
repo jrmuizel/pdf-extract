@@ -1347,7 +1347,6 @@ pub enum ColorSpace {
     DeviceGray,
     DeviceRGB,
     DeviceCMYK,
-    DeviceN,
     Pattern,
     CalRGB(CalRGB),
     CalGray(CalGray),
@@ -1460,7 +1459,6 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                     "DeviceGray" => ColorSpace::DeviceGray,
                     "DeviceRGB" => ColorSpace::DeviceRGB,
                     "DeviceCMYK" => ColorSpace::DeviceCMYK,
-                    "DeviceN" => ColorSpace::DeviceN,
                     _ => {
                         panic!("color_space {:?} {:?} {:?}", name, cs_name, cs)
                     }
