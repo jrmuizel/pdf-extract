@@ -2123,6 +2123,25 @@ pub fn print_metadata(doc: &Document) {
     dlog!("Type: {:?}", get_pages(&doc).get(b"Type").and_then(|x| x.as_name()).unwrap());
 }
 
+pub fn extract_text_by_page<P: std::convert::AsRef<std::path::Path>>(path: P, page: u32) -> Result<String, OutputError> {
+    let mut s = String::new();
+    {
+        let mut output = PlainTextOutput::new(&mut s);
+        let doc = Document::load(path)?;
+        output_doc_page(&doc, &mut output, page)?;
+    }
+    return Ok(s);
+}
+
+pub fn extract_text_from_mem_by_page(buffer: &[u8], page: u32) -> Result<String, OutputError> {
+    let mut s = String::new();
+    {
+        let mut output = PlainTextOutput::new(&mut s);
+        let doc = Document::load_mem(buffer)?;
+        output_doc_page(&doc, &mut output, page)?;
+    }
+    return Ok(s);
+}
 /// Extract the text from a pdf at `path` and return a `String` with the results
 pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<String, OutputError> {
     let mut s = String::new();
@@ -2236,6 +2255,38 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), Outp
         output.begin_page(page_num, &media_box, art_box)?;
 
         p.process_stream(&doc, doc.get_page_content(dict.1).unwrap(), resources,&media_box, output, page_num)?;
+
+        output.end_page()?;
+    }
+    Ok(())
+}
+
+pub fn output_doc_page(doc: &Document, output: &mut dyn OutputDev, page: u32) -> Result<(), OutputError> {
+    if let Ok(_) = doc.trailer.get(b"Encrypt") {
+        eprintln!("Encrypted documents are not currently supported: See https://github.com/J-F-Liu/lopdf/issues/168")
+    }
+    let empty_resources = &Dictionary::new();
+
+    let pages = doc.get_pages();
+    let mut p = Processor::new();
+    if let Some(dict) = pages.get(&page) {
+        let page_num = dict.0;
+        let page_dict = doc.get_object(*dict).unwrap().as_dict().unwrap();
+        dlog!("page {} {:?}", page_num, page_dict);
+        // XXX: Some pdfs lack a Resources directory
+        let resources = get_inherited(doc, page_dict, b"Resources").unwrap_or(empty_resources);
+        dlog!("resources {:?}", resources);
+
+        // pdfium searches up the page tree for MediaBoxes as needed
+        let media_box: Vec<f64> = get_inherited(doc, page_dict, b"MediaBox").expect("MediaBox");
+        let media_box = MediaBox { llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3] };
+
+        let art_box = get::<Option<Vec<f64>>>(&doc, page_dict, b"ArtBox")
+            .map(|x| (x[0], x[1], x[2], x[3]));
+
+        output.begin_page(page_num, &media_box, art_box)?;
+
+        p.process_stream(&doc, doc.get_page_content(*dict).unwrap(), resources,&media_box, output, page_num)?;
 
         output.end_page()?;
     }
