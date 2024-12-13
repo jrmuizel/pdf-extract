@@ -23,14 +23,15 @@ fn extract_expected_text() {
 
 #[test]
 // iterate over all docs in the `tests/docs` directory, don't crash
-fn extract_all_docs() {
-    let docs = std::fs::read_dir("tests/docs").unwrap();
+fn extract_all_docs() -> Result<(), std::io::Error> {
+    let docs = std::fs::read_dir("tests/docs")?;
     for doc in docs {
-        let doc = doc.unwrap();
+        let doc = doc?;
         let path = doc.path();
-        let filename = path.file_name().unwrap().to_string_lossy();
+        let filename = path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("")).to_string_lossy();
         expected!(&filename, "").test();
     }
+    Ok(())
 }
 
 // data structure to make it easy to check if certain files are correctly parsed

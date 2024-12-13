@@ -88,32 +88,32 @@ fn get_info(doc: &Document) -> Option<&Dictionary> {
     None
 }
 
-fn get_catalog(doc: &Document) -> &Dictionary {
+fn get_catalog(doc: &Document) -> Result<&Dictionary, OutputError> {
     match doc.trailer.get(b"Root").unwrap() {
         &Object::Reference(ref id) => {
             match doc.get_object(*id) {
-                Ok(&Object::Dictionary(ref catalog)) => { return catalog; }
+                Ok(&Object::Dictionary(ref catalog)) => { return Ok(catalog); }
                 _ => {}
             }
         }
         _ => {}
     }
-    panic!();
+    Err(OutputError::PdfError(Error::Invalid(format!("catalog not found")))) //panic!();
 }
 
-fn get_pages(doc: &Document) -> &Dictionary {
-    let catalog = get_catalog(doc);
-    match catalog.get(b"Pages").unwrap() {
+fn get_pages(doc: &Document) -> Result<&Dictionary, OutputError> {
+    let catalog = get_catalog(doc)?;
+    match catalog.get(b"Pages")? {
         &Object::Reference(ref id) => {
             match doc.get_object(*id) {
-                Ok(&Object::Dictionary(ref pages)) => { return pages; }
+                Ok(&Object::Dictionary(ref pages)) => { return Ok(pages); }
                 other => {dlog!("pages: {:?}", other)}
             }
         }
         other => { dlog!("pages: {:?}", other)}
     }
     dlog!("catalog {:?}", catalog);
-    panic!();
+    Err(OutputError::PdfError(Error::Invalid(format!("pages not found")))) //panic!();
 }
 
 #[allow(non_upper_case_globals)]
@@ -490,7 +490,7 @@ impl<'a> PdfSimpleFont<'a> {
                                 }
                                 code += 1;
                             }
-                            _ => { panic!("wrong type {:?}", o); }
+                            _ => { () } //panic!("wrong type {:?}", o); }
                         }
                     }
                 }
@@ -670,7 +670,7 @@ impl<'a> PdfType3Font<'a> {
                                 }
                                 code += 1;
                             }
-                            _ => { panic!("wrong type"); }
+                            _ => { () } //panic!("wrong type"); }
                         }
                     }
                 }
@@ -887,14 +887,16 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
 
             dlog!("map: {:?}", unicode_map);
         }
-        None => { }
         Some(&Object::Name(ref name)) => {
             let name = pdf_to_utf8(name);
             if name != "Identity-H" {
                 todo!("unsupported ToUnicode name: {:?}", name);
             }
         }
-        _ => { panic!("unsupported cmap {:?}", to_unicode)}
+        None => { }
+        _ => { 
+            println!("unsupported cmap {:?}", to_unicode);
+        } //{ panic!("unsupported cmap {:?}", to_unicode)}
     }
     unicode_map
 }
@@ -1095,18 +1097,18 @@ enum Function {
 }
 
 impl Function {
-    fn new(doc: &Document, obj: &Object) -> Function {
+    fn new(doc: &Document, obj: &Object) -> Result<Self, OutputError> {
         let dict = match obj {
             &Object::Dictionary(ref dict) => dict,
             &Object::Stream(ref stream) => &stream.dict,
-            _ => panic!()
+            _ => return Err(OutputError::PdfError(Error::Invalid(format!("unexpected dictionary object {:?}", obj)))), //panic!() 
         };
         let function_type: i64 = get(doc, dict, b"FunctionType");
         let f = match function_type {
             0 => {
                 let stream = match obj {
                     &Object::Stream(ref stream) => stream,
-                    _ => panic!()
+                    _ => return Err(OutputError::PdfError(Error::Invalid(format!("unexpected stream object {:?}", obj)))), //panic!()
                 };
                 let range: Vec<f64> = get(doc, dict, b"Range");
                 let domain: Vec<f64> = get(doc, dict, b"Domain");
@@ -1136,7 +1138,7 @@ impl Function {
             }
             _ => { panic!("unhandled function type {}", function_type) }
         };
-        f
+        Ok(f)
     }
 }
 
@@ -1355,8 +1357,8 @@ pub enum ColorSpace {
     ICCBased(Vec<u8>)
 }
 
-fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary) -> ColorSpace {
-    match name {
+fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary) -> Result<ColorSpace, OutputError> {
+    let cs = match name {
         b"DeviceGray" => ColorSpace::DeviceGray,
         b"DeviceRGB" => ColorSpace::DeviceRGB,
         b"DeviceCMYK" => ColorSpace::DeviceCMYK,
@@ -1417,7 +1419,7 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                             }
                             _ => panic!("Alternate space should be name or array {:?}", cs[2])
                         };
-                        let tint_transform = Box::new(Function::new(doc, maybe_deref(doc, &cs[3])));
+                        let tint_transform = Box::new(Function::new(doc, maybe_deref(doc, &cs[3]))?);
 
                         dlog!("{:?} {:?} {:?}", name, alternate_space, tint_transform);
                         ColorSpace::Separation(Separation{ name, alternate_space, tint_transform})
@@ -1473,7 +1475,8 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                 panic!();
             }
         }
-    }
+    };
+    Ok(cs)
 }
 
 struct Processor<'a> {
@@ -1486,7 +1489,7 @@ impl<'a> Processor<'a> {
     }
 
     fn process_stream(&mut self, doc: &'a Document, content: Vec<u8>, resources: &'a Dictionary, media_box: &MediaBox, output: &mut dyn OutputDev, page_num: u32) -> Result<(), OutputError> {
-        let content = Content::decode(&content).unwrap();
+        let content = Content::decode(&content)?; //.unwrap();
         let mut font_table = HashMap::new();
         let mut gs: GraphicsState = GraphicsState {
             ts: TextState {
@@ -1539,12 +1542,12 @@ impl<'a> Processor<'a> {
                     dlog!("matrix {:?}", gs.ctm);
                 }
                 "CS" => {
-                    let name = operation.operands[0].as_name().unwrap();
-                    gs.stroke_colorspace = make_colorspace(doc, name, resources);
+                    let name = operation.operands[0].as_name()?; //.unwrap();
+                    gs.stroke_colorspace = make_colorspace(doc, name, resources)?;
                 }
                 "cs" => {
                     let name = operation.operands[0].as_name().unwrap();
-                    gs.fill_colorspace = make_colorspace(doc, name, resources);
+                    gs.fill_colorspace = make_colorspace(doc, name, resources)?;
                 }
                 "SC" | "SCN" => {
                     gs.stroke_color = match gs.stroke_colorspace {
@@ -1599,7 +1602,10 @@ impl<'a> Processor<'a> {
                         Object::String(ref s, _) => {
                             show_text(&mut gs, s, &tlm, &flip_ctm, output)?;
                         }
-                        _ => { panic!("unexpected Tj operand {:?}", operation) }
+                        _ => { 
+                            //dbg!("unexpected Tj operand {:?}", operation);
+                            return Err(OutputError::PdfError(Error::Invalid(format!("unexpected Tj operand {:?}", operation))));
+                        }
                     }
                 }
                 "Tc" => {
@@ -1616,7 +1622,7 @@ impl<'a> Processor<'a> {
                 }
                 "Tf" => {
                     let fonts: &Dictionary = get(&doc, resources, b"Font");
-                    let name = operation.operands[0].as_name().unwrap();
+                    let name = operation.operands[0].as_name()?; //.unwrap();
                     let font = font_table.entry(name.to_owned()).or_insert_with(|| make_font(doc, get::<&Dictionary>(doc, fonts, name))).clone();
                     {
                         /*let file = font.get_descriptor().and_then(|desc| desc.get_file());
@@ -1769,7 +1775,7 @@ impl<'a> Processor<'a> {
                     // `Do` process an entire subdocument, so we do a recursive call to `process_stream`
                     // with the subdocument content and resources
                     let xobject: &Dictionary = get(&doc, resources, b"XObject");
-                    let name = operation.operands[0].as_name().unwrap();
+                    let name = operation.operands[0].as_name()?; //.unwrap();
                     let xf: &Stream = get(&doc, xobject, name);
                     let resources = maybe_get_obj(&doc, &xf.dict, b"Resources").and_then(|n| n.as_dict().ok()).unwrap_or(resources);
                     let contents = get_contents(xf);
@@ -2118,9 +2124,9 @@ pub fn print_metadata(doc: &Document) {
             }
         }
     }
-    dlog!("Page count: {}", get::<i64>(&doc, &get_pages(&doc), b"Count"));
+    dlog!("Page count: {}", get::<i64>(&doc, &get_pages(&doc).unwrap(), b"Count"));
     dlog!("Pages: {:?}", get_pages(&doc));
-    dlog!("Type: {:?}", get_pages(&doc).get(b"Type").and_then(|x| x.as_name()).unwrap());
+    dlog!("Type: {:?}", get_pages(&doc).unwrap().get(b"Type").and_then(|x| x.as_name()).unwrap());
 }
 
 /// Extract the text from a pdf at `path` and return a `String` with the results
