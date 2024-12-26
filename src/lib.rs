@@ -818,7 +818,15 @@ impl<'a> PdfFont for PdfType3Font<'a> {
         if let Some(ref unicode_map) = self.unicode_map {
             let s = unicode_map.get(&char);
             let s = match s {
-                None => { panic!("missing char {:?} in map {:?}", char, unicode_map)}
+                None => {
+                    println!("missing char {:?} in unicode map {:?} for {:?}", char, unicode_map, self.font);
+                    // some pdf's like http://arxiv.org/pdf/2312.00577v1 are missing entries in their unicode map but do have
+                    // entries in the encoding.
+                    let encoding = self.encoding.as_ref().map(|x| &x[..]).expect("missing unicode map and encoding");
+                    let s = to_utf8(encoding, &slice);
+                    println!("falling back to encoding {} -> {:?}", char, s);
+                    s
+                }
                 Some(s) => { s.clone() }
             };
             return s
