@@ -541,7 +541,28 @@ impl<'a> PdfSimpleFont<'a> {
                 i += 1;
             }
             assert_eq!(first_char + i - 1, last_char);
-        } else if is_core_font(&base_name) {
+        } else {
+            let name = if is_core_font(&base_name) {
+                &base_name
+            } else {
+                println!("no widths and not core font {:?}", base_name);
+
+                // This situation is handled differently by different readers
+                // but basically we try to substitute the best font that we can.
+
+                // Poppler/Xpdf:
+                // this is technically an error -- the Widths entry is required
+                // for all but the Base-14 fonts -- but certain PDF generators
+                // apparently don't include widths for Arial and TimesNewRoman
+
+                // Pdfium: CFX_FontMapper::FindSubstFont
+
+                // mupdf: pdf_load_substitute_font
+
+                // We can try to do a better job guessing at a font by looking at the flags
+                // or the basename but for now we'll just use Helvetica
+                "Helvetica"
+            };
             for font_metrics in core_fonts::metrics().iter() {
                 if font_metrics.0 == base_name {
                     if let Some(ref encoding) = encoding_table {
@@ -590,8 +611,6 @@ impl<'a> PdfSimpleFont<'a> {
                     // assert!(maybe_get_obj(doc, font, b"Widths").is_none());
                 }
             }
-        } else {
-            panic!("no widths and not core font {:?}", base_name);
         }
 
         let missing_width = get::<Option<f64>>(doc, font, b"MissingWidth").unwrap_or(0.);
