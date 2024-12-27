@@ -591,7 +591,7 @@ impl<'a> PdfSimpleFont<'a> {
                 }
             }
         } else {
-            panic!("no widths");
+            panic!("no widths and not core font {:?}", base_name);
         }
 
         let missing_width = get::<Option<f64>>(doc, font, b"MissingWidth").unwrap_or(0.);
