@@ -939,8 +939,11 @@ impl<'a> PdfCIDFont<'a> {
             &Object::Name(ref name) => {
                 let name = pdf_to_utf8(name);
                 dlog!("encoding {:?}", name);
-                assert_eq!(name, "Identity-H");
-                ByteMapping { codespace: vec![CodeRange{width: 2, start: 0, end: 0xffff }], cid: vec![CIDRange{ src_code_lo: 0, src_code_hi: 0xffff, dst_CID_lo: 0 }]}
+                if name == "Identity-H" || name == "Identity-V" {
+                    ByteMapping { codespace: vec![CodeRange{width: 2, start: 0, end: 0xffff }], cid: vec![CIDRange{ src_code_lo: 0, src_code_hi: 0xffff, dst_CID_lo: 0 }]}
+                } else {
+                    panic!("unsupported encoding {}", name);
+                }
             }
             &Object::Stream(ref stream) => {
                 let contents = get_contents(stream);
