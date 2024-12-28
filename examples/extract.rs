@@ -22,7 +22,8 @@ fn main() {
     output_file.push(filename);
     output_file.set_extension(&output_kind);
     let mut output_file = BufWriter::new(File::create(output_file).expect("could not create output"));
-    let doc = Document::load(path).unwrap();
+    let mut doc = Document::load(path).unwrap();
+
 
     print_metadata(&doc);
 
@@ -32,6 +33,10 @@ fn main() {
         "svg" => Box::new(SVGOutput::new(&mut output_file)),
         _ => panic!(),
     };
+
+    if doc.is_encrypted() {
+        doc.decrypt("");
+    }
 
     output_doc(&doc, output.as_mut());
 }
