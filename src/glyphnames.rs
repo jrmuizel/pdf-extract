@@ -4706,6 +4706,6 @@ pub fn name_to_unicode(name: &str) -> Option<u16> {
 ("zuhiragana", 0x305a),
 ("zukatakana", 0x30ba)
     ];
-    let result = names.binary_search_by_key(&name, |&(name,_code)| &name);
+    let result = names.binary_search_by_key(&name, |&(name,_code)| name);
     result.ok().map(|indx| names[indx].1)
 }

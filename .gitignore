@@ -4,3 +4,4 @@ Cargo.lock
 tests/docs_cache
 /*.pdf
 /*.txt
+tags
