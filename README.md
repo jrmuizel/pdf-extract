@@ -14,10 +14,11 @@ assert!(out.contains("This is a small demonstration"));
 ## See also
 
 - https://github.com/elacin/PDFExtract/
-- https://github.com/euske/pdfminer
+- https://github.com/euske/pdfminer / https://github.com/pdfminer/pdfminer.six
 - https://github.com/CrossRef/pdfextract
 - https://github.com/VikParuchuri/marker
 - https://github.com/kermitt2/pdfalto used by [grobid](https://github.com/kermitt2/grobid/)
+- https://github.com/opendatalab/MinerU (uses PyMuPDF and pdfminer.six)
 
 ### Not PDF specific
 - https://github.com/Layout-Parser/layout-parser
