@@ -51,27 +51,29 @@ impl ExpectedText<'_> {
             if !std::path::Path::new(docs_cache).exists() {
                 // This might race with exists test above, but that's fine
                 if let Err(e) = std::fs::create_dir(docs_cache) {
-                    if e.kind() != std::io::ErrorKind::AlreadyExists {
-                        panic!("Failed to create directory {}, {}", docs_cache, e);
-                    }
-                } 
+                    assert!(
+                        (e.kind() == std::io::ErrorKind::AlreadyExists),
+                        "Failed to create directory {}, {}",
+                        docs_cache,
+                        e
+                    );
+                }
             }
             let file_path = format!("{}/{}", docs_cache, filename.replace(".link", ""));
             if std::path::Path::new(&file_path).exists() {
-                file_path
             } else {
-                let url = std::fs::read_to_string(format!("tests/docs/{}", filename)).unwrap();
+                let url = std::fs::read_to_string(format!("tests/docs/{filename}")).unwrap();
                 let resp = ureq::get(&url).call().unwrap();
                 let mut file = std::fs::File::create(&file_path).unwrap();
                 std::io::copy(&mut resp.into_reader(), &mut file).unwrap();
-                file_path
             }
+            file_path
         } else {
-            format!("tests/docs/{}", filename)
+            format!("tests/docs/{filename}")
         };
         let out = extract_text(file_path)
             .unwrap_or_else(|e| panic!("Failed to extract text from {}, {}", filename, e));
-        println!("{}", out);
+        println!("{out}");
         assert!(
             out.contains(text),
             "Text {} does not contain '{}'",
