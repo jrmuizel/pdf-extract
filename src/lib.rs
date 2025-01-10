@@ -1,6 +1,3 @@
-#![allow(clippy::literal_string_with_formatting_args)]
-#![allow(dead_code)]
-
 extern crate adobe_cmap_parser;
 extern crate encoding_rs;
 extern crate euclid;
@@ -1330,7 +1327,11 @@ impl Function {
 
         match function_type {
             0 => {
-                let stream = if let Object::Stream(stream) = obj { stream } else { panic!() };
+                let stream = if let Object::Stream(stream) = obj {
+                    stream
+                } else {
+                    panic!()
+                };
                 let range: Vec<f64> = get(doc, dict, b"Range");
                 let domain: Vec<f64> = get(doc, dict, b"Domain");
                 let contents = get_contents(stream);
