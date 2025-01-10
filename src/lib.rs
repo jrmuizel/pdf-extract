@@ -2784,3 +2784,180 @@ fn output_doc_inner<'a>(
     output.end_page()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::iter::FromIterator;
+    use tempfile::NamedTempFile;
+
+    use lopdf::content::Operation;
+
+    // Helper function to create a simple PDF document for testing
+    fn create_test_pdf() -> Vec<u8> {
+        let mut doc = Document::with_version("1.5");
+
+        // Add a simple page with text
+        let pages = Dictionary::from_iter(vec![
+            (b"Type".to_vec(), Object::Name(b"Pages".to_vec())),
+            (b"Count".to_vec(), Object::Integer(1)),
+            (
+                b"MediaBox".to_vec(),
+                Object::Array(vec![
+                    Object::Integer(0),
+                    Object::Integer(0),
+                    Object::Integer(612),
+                    Object::Integer(792),
+                ]),
+            ),
+        ]);
+        let pages_id = doc.add_object(pages);
+
+        let font_dict = Dictionary::from_iter(vec![
+            (b"Type".to_vec(), Object::Name(b"Font".to_vec())),
+            (b"Subtype".to_vec(), Object::Name(b"Type1".to_vec())),
+            (b"BaseFont".to_vec(), Object::Name(b"Helvetica".to_vec())),
+        ]);
+        let font_id = doc.add_object(font_dict);
+
+        let resources = Dictionary::from_iter(vec![(
+            b"Font".to_vec(),
+            Object::Dictionary(Dictionary::from_iter(vec![(
+                b"F1".to_vec(),
+                Object::Reference(font_id),
+            )])),
+        )]);
+
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new(
+                    "Tf",
+                    vec![Object::Name(b"F1".to_vec()), Object::Integer(12)],
+                ),
+                Operation::new("Td", vec![Object::Integer(100), Object::Integer(700)]),
+                Operation::new(
+                    "Tj",
+                    vec![Object::String(
+                        b"Test Content".to_vec(),
+                        StringFormat::Literal,
+                    )],
+                ),
+                Operation::new("ET", vec![]),
+            ],
+        };
+
+        let content_stream = Stream::new(Dictionary::new(), content.encode().unwrap());
+        let content_id = doc.add_object(content_stream);
+
+        let page = Dictionary::from_iter(vec![
+            (b"Type".to_vec(), Object::Name(b"Page".to_vec())),
+            (b"Parent".to_vec(), Object::Reference(pages_id)),
+            (b"Resources".to_vec(), Object::Dictionary(resources)),
+            (b"Contents".to_vec(), Object::Reference(content_id)),
+        ]);
+        let page_id = doc.add_object(page);
+
+        // Update pages with kids
+        doc.get_object_mut(pages_id)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+
+        // Set up document catalog
+        let catalog = Dictionary::from_iter(vec![
+            (b"Type".to_vec(), Object::Name(b"Catalog".to_vec())),
+            (b"Pages".to_vec(), Object::Reference(pages_id)),
+        ]);
+        let catalog_id = doc.add_object(catalog);
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        // Save to memory
+        let mut buffer = Vec::new();
+        doc.save_to(&mut buffer).unwrap();
+        buffer
+    }
+
+    #[test]
+    fn test_basic_text_extraction() {
+        let pdf_data = create_test_pdf();
+        let result = extract_text_from_mem(&pdf_data).unwrap();
+        assert!(result.contains("Test Content"));
+    }
+
+    #[test]
+    fn test_extract_text_by_pages() {
+        let pdf_data = create_test_pdf();
+        let pages = extract_text_from_mem_by_pages(&pdf_data).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert!(pages[0].contains("Test Content"));
+    }
+
+    #[test]
+    fn test_plain_text_output() {
+        let mut output = String::new();
+        let mut text_output = PlainTextOutput::new(&mut output);
+
+        // Test basic character output
+        text_output
+            .begin_page(
+                1,
+                &MediaBox {
+                    llx: 0.0,
+                    lly: 0.0,
+                    urx: 612.0,
+                    ury: 792.0,
+                },
+                None,
+            )
+            .unwrap();
+        text_output.begin_word().unwrap();
+        text_output
+            .output_character(&Transform2D::identity(), 10.0, 0.0, 12.0, "Test")
+            .unwrap();
+        text_output.end_word().unwrap();
+        text_output.end_page().unwrap();
+
+        assert!(output.contains("Test"));
+    }
+
+    #[test]
+    fn test_pdf_to_utf8_conversion() {
+        // Test basic ASCII
+        let input = b"Hello";
+        assert_eq!(pdf_to_utf8(input), "Hello");
+
+        // Test UTF-16BE with BOM
+        let mut input = vec![0xFE, 0xFF];
+        input.extend_from_slice(&[0x00, 0x41]); // Letter 'A' in UTF-16BE
+        assert_eq!(pdf_to_utf8(&input), "A");
+    }
+
+    #[test]
+    fn test_get_unicode_map() {
+        let doc = Document::with_version("1.5");
+        let font_dict = Dictionary::new();
+        let result = get_unicode_map(&doc, &font_dict);
+        assert!(result.is_none()); // Should return None for empty dictionary
+    }
+
+    #[test]
+    fn test_file_handling() {
+        // Test with temporary file
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let pdf_data = create_test_pdf();
+        temp_file.write_all(&pdf_data).unwrap();
+
+        let result = extract_text(temp_file.path()).unwrap();
+        assert!(result.contains("Test Content"));
+    }
+
+    #[test]
+    fn test_invalid_pdf() {
+        let invalid_data = b"This is not a PDF file";
+        let result = extract_text_from_mem(invalid_data);
+        assert!(result.is_err());
+    }
+}
