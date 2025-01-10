@@ -53,9 +53,7 @@ impl ExpectedText<'_> {
                 if let Err(e) = std::fs::create_dir(docs_cache) {
                     assert!(
                         (e.kind() == std::io::ErrorKind::AlreadyExists),
-                        "Failed to create directory {}, {}",
-                        docs_cache,
-                        e
+                        "Failed to create directory {docs_cache}, {e}"
                     );
                 }
             }
@@ -72,13 +70,11 @@ impl ExpectedText<'_> {
             format!("tests/docs/{filename}")
         };
         let out = extract_text(file_path)
-            .unwrap_or_else(|e| panic!("Failed to extract text from {}, {}", filename, e));
+            .unwrap_or_else(|e| panic!("Failed to extract text from {filename}, {e}"));
         println!("{out}");
         assert!(
             out.contains(text),
-            "Text {} does not contain '{}'",
-            filename,
-            text
+            "Text {filename} does not contain '{text}'"
         );
     }
 }

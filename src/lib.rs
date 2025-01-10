@@ -583,7 +583,7 @@ impl<'a> PdfSimpleFont<'a> {
                                 code += 1;
                             }
                             _ => {
-                                panic!("wrong type {:?}", o);
+                                panic!("wrong type {o:?}");
                             }
                         }
                     }
@@ -705,7 +705,7 @@ impl<'a> PdfSimpleFont<'a> {
                             if w.0 != -1 {
                                 table[w.0 as usize] = if base_name == "ZapfDingbats" {
                                     zapfglyphnames::zapfdigbats_names_to_unicode(w.2)
-                                        .unwrap_or_else(|| panic!("bad name {:?}", w))
+                                        .unwrap_or_else(|| panic!("bad name {w:?}"))
                                 } else {
                                     glyphnames::name_to_unicode(w.2).unwrap()
                                 }
@@ -960,7 +960,7 @@ impl PdfFont for PdfSimpleFont<'_> {
                     println!("falling back to encoding {char} -> {s:?}");
                     s
                 },
-                |s| s.clone(),
+                std::clone::Clone::clone,
             );
             return s;
         }
@@ -1016,7 +1016,7 @@ impl PdfFont for PdfType3Font<'_> {
                     println!("falling back to encoding {char} -> {s:?}");
                     s
                 },
-                |s| s.clone(),
+                std::clone::Clone::clone,
             );
 
             return s;
@@ -1088,7 +1088,7 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
             }
         }
         _ => {
-            panic!("unsupported cmap {:?}", to_unicode)
+            panic!("unsupported cmap {to_unicode:?}")
         }
     }
     unicode_map
@@ -1124,7 +1124,7 @@ impl<'a> PdfCIDFont<'a> {
                         }],
                     }
                 } else {
-                    panic!("unsupported encoding {}", name);
+                    panic!("unsupported encoding {name}");
                 }
             }
             Object::Stream(stream) => {
@@ -1133,7 +1133,7 @@ impl<'a> PdfCIDFont<'a> {
                 adobe_cmap_parser::get_byte_mapping(&contents).unwrap()
             }
             _ => {
-                panic!("unsupported encoding {:?}", encoding)
+                panic!("unsupported encoding {encoding:?}")
             }
         };
 
@@ -1330,10 +1330,7 @@ impl Function {
 
         match function_type {
             0 => {
-                let stream = match obj {
-                    Object::Stream(stream) => stream,
-                    _ => panic!(),
-                };
+                let stream = if let Object::Stream(stream) = obj { stream } else { panic!() };
                 let range: Vec<f64> = get(doc, dict, b"Range");
                 let domain: Vec<f64> = get(doc, dict, b"Domain");
                 let contents = get_contents(stream);
@@ -1370,7 +1367,7 @@ impl Function {
                 Self::Type2(Type2Func { c0, c1, n })
             }
             _ => {
-                panic!("unhandled function type {}", function_type)
+                panic!("unhandled function type {function_type}")
             }
         }
     }
@@ -1505,7 +1502,7 @@ fn apply_state(doc: &Document, gs: &mut GraphicsState, state: &Dictionary) {
                     gs.smask = Some(dict.clone());
                 }
                 _ => {
-                    panic!("unexpected smask type {:?}", v)
+                    panic!("unexpected smask type {v:?}")
                 }
             },
             b"Type" => match v {
@@ -1617,7 +1614,7 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
         _ => {
             let colorspaces: &Dictionary = get(doc, resources, b"ColorSpace");
             let cs: &Object = maybe_get_obj(doc, colorspaces, name)
-                .unwrap_or_else(|| panic!("missing colorspace {:?}", name));
+                .unwrap_or_else(|| panic!("missing colorspace {name:?}"));
 
             cs.as_array().map_or_else(
                 |_| {
@@ -1737,7 +1734,7 @@ fn make_colorspace<'a>(doc: &'a Document, name: &[u8], resources: &'a Dictionary
                         "DeviceCMYK" => ColorSpace::DeviceCMYK,
                         "DeviceN" => ColorSpace::DeviceN,
                         _ => {
-                            panic!("color_space {:?} {:?} {:?}", name, cs_name, cs)
+                            panic!("color_space {name:?} {cs_name:?} {cs:?}")
                         }
                     }
                 },
@@ -1886,7 +1883,7 @@ impl<'a> Processor<'a> {
                         show_text(&mut gs, s, &tlm, &flip_ctm, output)?;
                     }
                     _ => {
-                        panic!("unexpected Tj operand {:?}", operation)
+                        panic!("unexpected Tj operand {operation:?}")
                     }
                 },
                 "Tc" => {
