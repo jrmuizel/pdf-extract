@@ -1121,7 +1121,7 @@ enum Function {
     #[allow(dead_code)]
     Type3,
     #[allow(dead_code)]
-    Type4
+    Type4(Vec<u8>)
 }
 
 impl Function {
@@ -1134,6 +1134,7 @@ impl Function {
         let function_type: i64 = get(doc, dict, b"FunctionType");
         let f = match function_type {
             0 => {
+                // Sampled function
                 let stream = match obj {
                     &Object::Stream(ref stream) => stream,
                     _ => panic!()
@@ -1159,10 +1160,28 @@ impl Function {
                 Function::Type0(Type0Func { domain, range, size, contents, bits_per_sample, encode, decode })
             }
             2 => {
+                // Exponential interpolation function
                 let c0 = get::<Option<Vec<f64>>>(doc, dict, b"C0");
                 let c1 = get::<Option<Vec<f64>>>(doc, dict, b"C1");
                 let n = get::<f64>(doc, dict, b"N");
                 Function::Type2(Type2Func { c0, c1, n})
+            }
+            3 => {
+                // Stitching function
+                Function::Type3
+            }
+            4 => {
+                // PostScript calculator function
+                let contents = match obj {
+                    &Object::Stream(ref stream) => {
+                        let contents = get_contents(stream);
+                        println!("unhandled type-4 function");
+                        println!("Stream: {}", String::from_utf8(contents.clone()).unwrap());
+                        contents
+                    }
+                    _ => { panic!("type 4 functions should be streams") }
+                };
+                Function::Type4(contents)
             }
             _ => { panic!("unhandled function type {}", function_type) }
         };
