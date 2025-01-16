@@ -23,10 +23,13 @@ use std::collections::hash_map::Entry;
 use std::rc::Rc;
 use std::marker::PhantomData;
 use std::result::Result;
+
+use crate::winansiencoding::WinAnsiEncoding;
 mod core_fonts;
 mod glyphnames;
 mod zapfglyphnames;
 mod encodings;
+mod winansiencoding;
 
 pub struct Space;
 pub type Transform = Transform2D<f64, Space, Space>;
@@ -784,26 +787,32 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
     }
     fn decode_char(&self, char: CharCode) -> String {
         let slice = [char as u8];
+        
+        // Try unicode map first
         if let Some(ref unicode_map) = self.unicode_map {
-            let s = unicode_map.get(&char);
-            let s = match s {
-                None => {
-                    println!("missing char {:?} in unicode map {:?} for {:?}", char, unicode_map, self.font);
-                    // some pdf's like http://arxiv.org/pdf/2312.00064v1 are missing entries in their unicode map but do have
-                    // entries in the encoding.
-                    let encoding = self.encoding.as_ref().map(|x| &x[..]).expect("missing unicode map and encoding");
-                    let s = to_utf8(encoding, &slice);
-                    println!("falling back to encoding {} -> {:?}", char, s);
-                    s
-                }
-                Some(s) => { s.clone() }
-            };
-            return s
+            if let Some(s) = unicode_map.get(&char) {
+                return s.clone();
+            }
+            // some pdf's like http://arxiv.org/pdf/2312.00064v1 are missing entries in their unicode map but do have
+            // entries in the encoding.
+            println!("missing char {:?} in unicode map {:?} for {:?}", char, unicode_map, self.font);
         }
-        let encoding = self.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
-        //dlog!("char_code {:?} {:?}", char, self.encoding);
-        let s = to_utf8(encoding, &slice);
-        s
+
+        // Try encoding next
+        if let Some(encoding) = self.encoding.as_ref() {
+            let s = to_utf8(encoding, &slice);
+            //println!("falling back to encoding {} -> {:?}", char, s);
+            return s;
+        }
+
+        // Final fallback - WinAnsiEncoding
+        if char <= 255 {
+            let winansi = WinAnsiEncoding::new();
+            return to_utf8(winansi.as_slice(), &slice);
+        }
+        
+        // If everything fails, return hex representation
+        format!("[{:02X}]", char)
     }
 }
 
