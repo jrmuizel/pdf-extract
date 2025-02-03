@@ -1,5 +1,6 @@
+use log::info;
 use pdf_extract::extract_text;
-
+use test_log::test;
 // Shorthand for creating ExpectedText
 // example: expected!("atomic.pdf", "Atomic Data");
 macro_rules! expected {
@@ -71,7 +72,7 @@ impl ExpectedText<'_> {
         };
         let out = extract_text(file_path)
             .unwrap_or_else(|e| panic!("Failed to extract text from {}, {}", filename, e));
-        println!("{}", out);
+        info!("{}", out);
         assert!(
             out.contains(text),
             "Text {} does not contain '{}'",
