@@ -21,6 +21,7 @@ lopdf = {version = "0.34", default-features = false, features = ["nom_parser"]}
 postscript = "0.14"
 type1-encoding-parser = "0.1.0"
 unicode-normalization = "0.1.19"
+cff-parser = "0.1.0"
 
 [dev-dependencies]
 ureq = "2.6.2"

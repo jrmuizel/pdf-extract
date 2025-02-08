@@ -378,6 +378,7 @@ impl<'a> PdfSimpleFont<'a> {
         dlog!("base_name {} {} enc:{:?} {:?}", base_name, subtype, encoding, font);
         let descriptor: Option<&Dictionary> = get(doc, font, b"FontDescriptor");
         let mut type1_encoding = None;
+        let mut unicode_map = None;
         if let Some(descriptor) = descriptor {
             dlog!("descriptor {:?}", descriptor);
             if subtype == "Type1" {
@@ -406,6 +407,31 @@ impl<'a> PdfSimpleFont<'a> {
                 Some(&Object::Stream(ref s)) => {
                     let subtype = get_name_string(doc, &s.dict, b"Subtype");
                     dlog!("font file {}, {:?}", subtype, s);
+                    let s = get_contents(s);
+                    if subtype == "Type1C" {
+                        let table = cff_parser::Table::parse(&s).unwrap();
+                        let charset = table.charset.get_table();
+                        let encoding = table.encoding.get_table();
+                        let mut mapping = HashMap::new();
+                        for i in 0..encoding.len() {
+                            let cid = encoding[i];
+                            let sid = charset[i];
+                            let name = cff_parser::string_by_id(&table, sid).unwrap();
+                            let unicode = glyphnames::name_to_unicode(&name).or_else(|| {
+                                zapfglyphnames::zapfdigbats_names_to_unicode(name)
+                            });
+                            if let Some(unicode) = unicode {
+                                let str = String::from_utf16(&[unicode]).unwrap();
+                                mapping.insert(cid as u32, str);
+                            }
+                        }
+                        unicode_map = Some(mapping);
+                        //
+                        //File::create(format!("/tmp/{}", base_name)).unwrap().write_all(&s);
+                    }
+
+                    //
+                    //File::create(format!("/tmp/{}", base_name)).unwrap().write_all(&s);
                 }
                 None => {}
                 _ => { dlog!("unexpected") }
@@ -419,7 +445,16 @@ impl<'a> PdfSimpleFont<'a> {
             //dlog!("charset {:?}", charset);
         }
 
-        let mut unicode_map = get_unicode_map(doc, font);
+        let mut unicode_map = match unicode_map {
+            Some(mut unicode_map) => {
+                unicode_map.extend(get_unicode_map(doc, font).unwrap_or(HashMap::new()));
+                Some(unicode_map)
+            }
+            None => {
+                get_unicode_map(doc, font)
+            }
+        };
+
 
         let mut encoding_table = None;
         match encoding {
