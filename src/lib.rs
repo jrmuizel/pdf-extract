@@ -413,7 +413,7 @@ impl<'a> PdfSimpleFont<'a> {
                         let charset = table.charset.get_table();
                         let encoding = table.encoding.get_table();
                         let mut mapping = HashMap::new();
-                        for i in 0..encoding.len() {
+                        for i in 0..encoding.len().min(charset.len()) {
                             let cid = encoding[i];
                             let sid = charset[i];
                             let name = cff_parser::string_by_id(&table, sid).unwrap();
