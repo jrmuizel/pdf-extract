@@ -1247,7 +1247,7 @@ struct TextState<'a>
 
 // XXX: We'd ideally implement this without having to copy the uncompressed data
 fn get_contents(contents: &Stream) -> Vec<u8> {
-    if contents.filters().is_ok() {
+    if contents.filter().is_ok() {
         contents.decompressed_content().unwrap_or_else(|_|contents.content.clone())
     } else {
         contents.content.clone()
