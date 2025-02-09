@@ -23,6 +23,7 @@ use std::collections::hash_map::Entry;
 use std::rc::Rc;
 use std::marker::PhantomData;
 use std::result::Result;
+use log::{warn, error};
 mod core_fonts;
 mod glyphnames;
 mod zapfglyphnames;
@@ -493,7 +494,7 @@ impl<'a> PdfSimpleFont<'a> {
                                             Entry::Occupied(e) => {
                                                 if e.get() != &String::from_utf16(&be).unwrap() {
                                                     let normal_match  = e.get().nfkc().eq(String::from_utf16(&be).unwrap().nfkc());
-                                                    println!("Unicode mismatch {} {} {:?} {:?} {:?}", normal_match, name, e.get(), String::from_utf16(&be), be);
+                                                    warn!("Unicode mismatch {} {} {:?} {:?} {:?}", normal_match, name, e.get(), String::from_utf16(&be), be);
                                                 }
                                             }
                                         }
@@ -511,7 +512,7 @@ impl<'a> PdfSimpleFont<'a> {
                                             }
                                         }
                                         _ => {
-                                            println!("unknown glyph name '{}' for font {}", name, base_name);
+                                            warn!("unknown glyph name '{}' for font {}", name, base_name);
                                         }
                                     }
                                 }
@@ -580,7 +581,7 @@ impl<'a> PdfSimpleFont<'a> {
             let name = if is_core_font(&base_name) {
                 &base_name
             } else {
-                println!("no widths and not core font {:?}", base_name);
+                warn!("no widths and not core font {:?}", base_name);
 
                 // This situation is handled differently by different readers
                 // but basically we try to substitute the best font that we can.
@@ -823,12 +824,12 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
             let s = unicode_map.get(&char);
             let s = match s {
                 None => {
-                    println!("missing char {:?} in unicode map {:?} for {:?}", char, unicode_map, self.font);
+                    warn!("missing char {:?} in unicode map {:?} for {:?}", char, unicode_map, self.font);
                     // some pdf's like http://arxiv.org/pdf/2312.00064v1 are missing entries in their unicode map but do have
                     // entries in the encoding.
                     let encoding = self.encoding.as_ref().map(|x| &x[..]).expect("missing unicode map and encoding");
                     let s = to_utf8(encoding, &slice);
-                    println!("falling back to encoding {} -> {:?}", char, s);
+                    warn!("falling back to encoding {} -> {:?}", char, s);
                     s
                 }
                 Some(s) => { s.clone() }
@@ -873,12 +874,12 @@ impl<'a> PdfFont for PdfType3Font<'a> {
             let s = unicode_map.get(&char);
             let s = match s {
                 None => {
-                    println!("missing char {:?} in unicode map {:?} for {:?}", char, unicode_map, self.font);
+                    warn!("missing char {:?} in unicode map {:?} for {:?}", char, unicode_map, self.font);
                     // some pdf's like http://arxiv.org/pdf/2312.00577v1 are missing entries in their unicode map but do have
                     // entries in the encoding.
                     let encoding = self.encoding.as_ref().map(|x| &x[..]).expect("missing unicode map and encoding");
                     let s = to_utf8(encoding, &slice);
-                    println!("falling back to encoding {} -> {:?}", char, s);
+                    warn!("falling back to encoding {} -> {:?}", char, s);
                     s
                 }
                 Some(s) => { s.clone() }
@@ -1210,8 +1211,8 @@ impl Function {
                 let contents = match obj {
                     &Object::Stream(ref stream) => {
                         let contents = get_contents(stream);
-                        println!("unhandled type-4 function");
-                        println!("Stream: {}", String::from_utf8(contents.clone()).unwrap());
+                        warn!("unhandled type-4 function");
+                        warn!("Stream: {}", String::from_utf8(contents.clone()).unwrap());
                         contents
                     }
                     _ => { panic!("type 4 functions should be streams") }
@@ -1780,7 +1781,7 @@ impl<'a> Processor<'a> {
                     if let Some(s) = s {
                         gs = s;
                     } else {
-                        println!("No state to pop");
+                        warn!("No state to pop");
                     }
                 }
                 "gs" => {
@@ -1930,7 +1931,7 @@ impl<'a> HTMLOutput<'a> {
             // get the length of one sized of the square with the same area with a rectangle of size (x, y)
             let transformed_font_size = (transformed_font_size_vec.x * transformed_font_size_vec.y).sqrt();
             let (x, y) = (position.m31, position.m32);
-            println!("flush {} {:?}", self.buf, (x,y));
+            warn!("flush {} {:?}", self.buf, (x,y));
 
             write!(self.file, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>\n",
                    x, y, transformed_font_size, insert_nbsp(&self.buf))?;
@@ -1961,10 +1962,10 @@ impl<'a> OutputDev for HTMLOutput<'a> {
             let position = trm.post_transform(&self.flip_ctm);
             let (x, y) = (position.m31, position.m32);
 
-            println!("accum {} {:?}", char, (x,y));
+            warn!("accum {} {:?}", char, (x,y));
             self.buf += char;
         } else {
-            println!("flush {} {:?} {:?} {} {} {}", char, trm, self.last_ctm, width, font_size, spacing);
+            warn!("flush {} {:?} {:?} {} {} {}", char, trm, self.last_ctm, width, font_size, spacing);
             self.flush_string()?;
             self.buf = char.to_owned();
             self.buf_font_size = font_size;
@@ -2228,7 +2229,7 @@ fn maybe_decrypt(doc: &mut Document) -> Result<(), OutputError> {
 
     if let Err(e) = doc.decrypt("") {
         if let Error::Decryption(DecryptionError::IncorrectPassword) = e {
-            eprintln!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted")
+            error!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted")
         }
 
         return Err(OutputError::PdfError(e));
@@ -2367,7 +2368,7 @@ pub fn output_doc_encrypted<PW: AsRef<[u8]>>(
 /// Parse a given document and output it to `output`
 pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), OutputError> {
     if doc.is_encrypted() {
-        eprintln!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
+        error!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
     }
     let empty_resources = Dictionary::new();
     let pages = doc.get_pages();
@@ -2382,7 +2383,7 @@ pub fn output_doc(doc: &Document, output: &mut dyn OutputDev) -> Result<(), Outp
 
 pub fn output_doc_page(doc: &Document, output: &mut dyn OutputDev, page_num: u32) -> Result<(), OutputError> {
     if doc.is_encrypted() {
-        eprintln!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
+        error!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
     }
     let empty_resources = Dictionary::new();
     let pages = doc.get_pages();
