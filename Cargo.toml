@@ -7,7 +7,7 @@ keywords = ["pdf2text", "text", "pdf", "pdf2txt"]
 license = "MIT"
 name = "pdf-extract"
 repository = "https://github.com/jrmuizel/pdf-extract"
-version = "0.8.0"
+version = "0.8.2"
 include = ["src/**/*", "README.md"]
 
 [profile.release]
@@ -22,6 +22,7 @@ postscript = "0.14"
 type1-encoding-parser = "0.1.0"
 unicode-normalization = "0.1.19"
 log = "0.4.22"
+cff-parser = "0.1.0"
 
 [dev-dependencies]
 ureq = "2.6.2"
