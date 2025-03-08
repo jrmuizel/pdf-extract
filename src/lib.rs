@@ -494,7 +494,9 @@ impl<'a> PdfSimpleFont<'a> {
                                             Entry::Occupied(e) => {
                                                 if e.get() != &String::from_utf16(&be).unwrap() {
                                                     let normal_match  = e.get().nfkc().eq(String::from_utf16(&be).unwrap().nfkc());
-                                                    warn!("Unicode mismatch {} {} {:?} {:?} {:?}", normal_match, name, e.get(), String::from_utf16(&be), be);
+                                                    if !normal_match {
+                                                        warn!("Unicode mismatch {} {} {:?} {:?} {:?}", normal_match, name, e.get(), String::from_utf16(&be), be);
+                                                    }
                                                 }
                                             }
                                         }
