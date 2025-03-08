@@ -8,8 +8,10 @@ use std::io::BufWriter;
 use std::fs::File;
 use pdf_extract::*;
 use lopdf::*;
+use simple_logger::SimpleLogger;
 
 fn main() {
+    SimpleLogger::new().init().unwrap();
     //let output_kind = "html";
     //let output_kind = "txt";
     //let output_kind = "svg";
