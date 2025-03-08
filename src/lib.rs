@@ -314,7 +314,7 @@ struct PdfType3Font<'a> {
     font: &'a Dictionary,
     doc: &'a Document,
     encoding: Option<Vec<u16>>,
-    unicode_map: Option<HashMap<u32, String>>,
+    unicode_map: Option<HashMap<CharCode, String>>,
     widths: HashMap<CharCode, f64>, // should probably just use i32 here
 }
 
