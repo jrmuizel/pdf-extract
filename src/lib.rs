@@ -1250,7 +1250,7 @@ struct TextState<'a>
 
 // XXX: We'd ideally implement this without having to copy the uncompressed data
 fn get_contents(contents: &Stream) -> Vec<u8> {
-    if contents.filter().is_ok() {
+    if contents.filters().is_ok() {
         contents.decompressed_content().unwrap_or_else(|_|contents.content.clone())
     } else {
         contents.content.clone()
@@ -2307,7 +2307,7 @@ pub fn extract_text_by_pages_encrypted<P: std::convert::AsRef<std::path::Path>, 
     let mut v = Vec::new();
     {
         let mut doc = Document::load(path)?;
-        doc.decrypt(password)?;
+        doc.decrypt_raw(password)?;
         let mut page_num = 1;
         while let Ok(content) = extract_text_by_page(&mut doc, page_num) {
             v.push(content);
@@ -2335,7 +2335,7 @@ pub fn extract_text_from_mem_by_pages_encrypted<PW: AsRef<[u8]>>(buffer: &[u8], 
     let mut v = Vec::new();
     {
         let mut doc = Document::load_mem(buffer)?;
-        doc.decrypt(password)?;
+        doc.decrypt_raw(password)?;
         let mut page_num = 1;
         while let Ok(content) = extract_text_by_page(&doc, page_num) {
             v.push(content);
@@ -2363,7 +2363,7 @@ pub fn output_doc_encrypted<PW: AsRef<[u8]>>(
     output: &mut dyn OutputDev,
     password: PW,
 ) -> Result<(), OutputError> {
-    doc.decrypt(password)?;
+    doc.decrypt_raw(password)?;
     output_doc(doc, output)
 }
 
