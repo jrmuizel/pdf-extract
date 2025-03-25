@@ -1250,7 +1250,7 @@ struct TextState<'a>
 
 // XXX: We'd ideally implement this without having to copy the uncompressed data
 fn get_contents(contents: &Stream) -> Vec<u8> {
-    if contents.filter().is_ok() {
+    if contents.filters().is_ok() {
         contents.decompressed_content().unwrap_or_else(|_|contents.content.clone())
     } else {
         contents.content.clone()
@@ -2240,9 +2240,9 @@ fn maybe_decrypt(doc: &mut Document) -> Result<(), OutputError> {
     Ok(())
 }
 
-pub fn extract_text_encrypted<P: std::convert::AsRef<std::path::Path>, PW: AsRef<[u8]>>(
+pub fn extract_text_encrypted<P: std::convert::AsRef<std::path::Path>>(
     path: P,
-    password: PW,
+    password: &str,
 ) -> Result<String, OutputError> {
     let mut s = String::new();
     {
@@ -2264,9 +2264,9 @@ pub fn extract_text_from_mem(buffer: &[u8]) -> Result<String, OutputError> {
     Ok(s)
 }
 
-pub fn extract_text_from_mem_encrypted<PW: AsRef<[u8]>>(
+pub fn extract_text_from_mem_encrypted(
     buffer: &[u8],
-    password: PW,
+    password: &str,
 ) -> Result<String, OutputError> {
     let mut s = String::new();
     {
@@ -2303,7 +2303,7 @@ pub fn extract_text_by_pages<P: std::convert::AsRef<std::path::Path>>(path: P) -
     Ok(v)
 }
 
-pub fn extract_text_by_pages_encrypted<P: std::convert::AsRef<std::path::Path>, PW: AsRef<[u8]>>(path: P, password: PW) -> Result<Vec<String>, OutputError> {
+pub fn extract_text_by_pages_encrypted<P: std::convert::AsRef<std::path::Path>>(path: P, password: &str) -> Result<Vec<String>, OutputError> {
     let mut v = Vec::new();
     {
         let mut doc = Document::load(path)?;
@@ -2331,7 +2331,7 @@ pub fn extract_text_from_mem_by_pages(buffer: &[u8]) -> Result<Vec<String>, Outp
     Ok(v)
 }
 
-pub fn extract_text_from_mem_by_pages_encrypted<PW: AsRef<[u8]>>(buffer: &[u8], password: PW) -> Result<Vec<String>, OutputError> {
+pub fn extract_text_from_mem_by_pages_encrypted(buffer: &[u8], password: &str) -> Result<Vec<String>, OutputError> {
     let mut v = Vec::new();
     {
         let mut doc = Document::load_mem(buffer)?;
@@ -2358,10 +2358,10 @@ fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, ke
     }
 }
 
-pub fn output_doc_encrypted<PW: AsRef<[u8]>>(
+pub fn output_doc_encrypted(
     doc: &mut Document,
     output: &mut dyn OutputDev,
-    password: PW,
+    password: &str,
 ) -> Result<(), OutputError> {
     doc.decrypt(password)?;
     output_doc(doc, output)
