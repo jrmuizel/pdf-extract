@@ -802,7 +802,9 @@ impl<'a> PdfFont for PdfType3Font<'a> {
         if let Some(width) = width {
             return *width;
         } else {
-            panic!("missing width for {} {:?}", id, self.font);
+            //panic!("missing width for {} {:?}", id, self.font);
+            dlog!("missing width for {} falling back to default_width", id);
+            return self.default_width.unwrap();
         }
     }
     /*fn decode(&self, chars: &[u8]) -> String {
