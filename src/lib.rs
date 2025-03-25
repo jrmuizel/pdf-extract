@@ -804,7 +804,7 @@ impl<'a> PdfFont for PdfType3Font<'a> {
         } else {
             //panic!("missing width for {} {:?}", id, self.font);
             dlog!("missing width for {} falling back to default_width", id);
-            return self.default_width.unwrap();
+            return f64::INFINITY;
         }
     }
     /*fn decode(&self, chars: &[u8]) -> String {
