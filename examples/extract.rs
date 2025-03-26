@@ -7,7 +7,7 @@ use std::path;
 use std::io::BufWriter;
 use std::fs::File;
 use pdf_extract::*;
-use lopdf::*;
+//use lopdf::*;
 
 fn main() {
     //let output_kind = "html";
@@ -33,5 +33,5 @@ fn main() {
         _ => panic!(),
     };
 
-    output_doc(&doc, output.as_mut());
+    let _ = output_doc(&doc, output.as_mut());
 }
