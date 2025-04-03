@@ -7,7 +7,7 @@ keywords = ["pdf2text", "text", "pdf", "pdf2txt"]
 license = "MIT"
 name = "pdf-extract"
 repository = "https://github.com/jrmuizel/pdf-extract"
-version = "0.8.0"
+version = "0.9.0"
 include = ["src/**/*", "README.md"]
 
 [profile.release]
@@ -21,7 +21,15 @@ lopdf = { git = "https://github.com/kczimm/lopdf.git", rev = "bd7b007750fe2174c2
 postscript = "0.14"
 type1-encoding-parser = "0.1.0"
 unicode-normalization = "0.1.19"
+cff-parser = "0.1.0"
+log = "0.4.22"
 tracing = "0.1.41"
 
 [dev-dependencies]
 ureq = "2.6.2"
+test-log = "0.2.17"
+
+[dev-dependencies.simple_logger]
+version = "5"
+default-features = false
+features = ["colors"]
