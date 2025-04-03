@@ -17,7 +17,7 @@ debug = true
 adobe-cmap-parser = "0.4.1"
 encoding_rs = "0.8.34"
 euclid = "0.20.5"
-lopdf = {version = "0.34", default-features = false, features = ["nom_parser"]}
+lopdf = { git = "https://github.com/kczimm/lopdf.git", rev = "bd7b007750fe2174c2b3bbaef8c3f572f8371501", default-features = false }
 postscript = "0.14"
 type1-encoding-parser = "0.1.0"
 unicode-normalization = "0.1.19"
