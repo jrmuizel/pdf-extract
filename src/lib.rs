@@ -508,7 +508,7 @@ impl<'a> PdfSimpleFont<'a> {
                                             // code point, so we'll use an empty string instead. See issue #76
                                             match unicode_map.entry(code as u32) {
                                                 Entry::Vacant(v) => { v.insert("".to_owned()); }
-                                                Entry::Occupied(e) => {
+                                                Entry::Occupied(_e) => {
                                                     panic!("unexpected entry in unicode map")
                                                 }
                                             }
@@ -580,7 +580,7 @@ impl<'a> PdfSimpleFont<'a> {
             }
             assert_eq!(first_char + i - 1, last_char);
         } else {
-            let name = if is_core_font(&base_name) {
+            let _name = if is_core_font(&base_name) {
                 &base_name
             } else {
                 warn!("no widths and not core font {:?}", base_name);
@@ -1575,7 +1575,7 @@ impl<'a> Processor<'a> {
     }
 
     fn process_stream(&mut self, doc: &'a Document, content: Vec<u8>, resources: &'a Dictionary, media_box: &MediaBox, output: &mut dyn OutputDev, page_num: u32) -> Result<(), OutputError> {
-        let content = Content::decode(&content).unwrap();
+        let content = Content::decode(&content)?;
         let mut font_table = HashMap::new();
         let mut gs: GraphicsState = GraphicsState {
             ts: TextState {
