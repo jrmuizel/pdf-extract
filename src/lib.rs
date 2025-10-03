@@ -23,7 +23,7 @@ use std::collections::hash_map::Entry;
 use std::rc::Rc;
 use std::marker::PhantomData;
 use std::result::Result;
-use log::{warn, error};
+use log::{warn, error, debug};
 mod core_fonts;
 mod glyphnames;
 mod zapfglyphnames;
@@ -826,12 +826,12 @@ impl<'a> PdfFont for PdfSimpleFont<'a> {
             let s = unicode_map.get(&char);
             let s = match s {
                 None => {
-                    warn!("missing char {:?} in unicode map {:?} for {:?}", char, unicode_map, self.font);
+                    debug!("missing char {:?} in unicode map {:?} for {:?}", char, unicode_map, self.font);
                     // some pdf's like http://arxiv.org/pdf/2312.00064v1 are missing entries in their unicode map but do have
                     // entries in the encoding.
                     let encoding = self.encoding.as_ref().map(|x| &x[..]).expect("missing unicode map and encoding");
                     let s = to_utf8(encoding, &slice);
-                    warn!("falling back to encoding {} -> {:?}", char, s);
+                    debug!("falling back to encoding {} -> {:?}", char, s);
                     s
                 }
                 Some(s) => { s.clone() }
@@ -876,12 +876,12 @@ impl<'a> PdfFont for PdfType3Font<'a> {
             let s = unicode_map.get(&char);
             let s = match s {
                 None => {
-                    warn!("missing char {:?} in unicode map {:?} for {:?}", char, unicode_map, self.font);
+                    debug!("missing char {:?} in unicode map {:?} for {:?}", char, unicode_map, self.font);
                     // some pdf's like http://arxiv.org/pdf/2312.00577v1 are missing entries in their unicode map but do have
                     // entries in the encoding.
                     let encoding = self.encoding.as_ref().map(|x| &x[..]).expect("missing unicode map and encoding");
                     let s = to_utf8(encoding, &slice);
-                    warn!("falling back to encoding {} -> {:?}", char, s);
+                    debug!("falling back to encoding {} -> {:?}", char, s);
                     s
                 }
                 Some(s) => { s.clone() }
