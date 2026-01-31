@@ -411,24 +411,27 @@ impl<'a> PdfSimpleFont<'a> {
                     let s = get_contents(s);
                     if subtype == "Type1C" {
                         let table = cff_parser::Table::parse(&s).unwrap();
-                        let charset = table.charset.get_table();
-                        let encoding = table.encoding.get_table();
-                        let mut mapping = HashMap::new();
-                        for i in 0..encoding.len().min(charset.len()) {
-                            let cid = encoding[i];
-                            let sid = charset[i];
+                        //use std::io::Write;
+                        //File::create(format!("/tmp/{}", base_name)).unwrap().write_all(&s);
+                        
+                        let encoding = table.encoding.get_code_to_sid_table(&table.charset);
+
+                        let mapping: HashMap<u32, String> = encoding.into_iter().filter_map(|(cid, sid)| {
                             let name = cff_parser::string_by_id(&table, sid).unwrap();
+                            if name == ".notdef" {
+                                return None;
+                            }
                             let unicode = glyphnames::name_to_unicode(&name).or_else(|| {
                                 zapfglyphnames::zapfdigbats_names_to_unicode(name)
                             });
-                            if let Some(unicode) = unicode {
-                                let str = String::from_utf16(&[unicode]).unwrap();
-                                mapping.insert(cid as u32, str);
+                            if unicode.is_none() {
+                                warn!("Couldn't find unicode for {}", name);
+                                return None;
                             }
-                        }
+                            let str = String::from_utf16(&[unicode.unwrap()]).unwrap();
+                            Some((cid as u32, str))
+                        }).collect();
                         unicode_map = Some(mapping);
-                        //
-                        //File::create(format!("/tmp/{}", base_name)).unwrap().write_all(&s);
                     }
 
                     //

@@ -21,7 +21,7 @@ lopdf = {version = "0.38", default-features = false}
 postscript = "0.14"
 type1-encoding-parser = "0.1.0"
 unicode-normalization = "0.1.19"
-cff-parser = "0.1.0"
+cff-parser = "0.2.0"
 log = "0.4.22"
 
 [dev-dependencies]
