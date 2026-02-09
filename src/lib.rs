@@ -5,7 +5,6 @@ use encoding_rs::UTF_16BE;
 use lopdf::content::Content;
 pub use lopdf::*;
 use euclid::*;
-use lopdf::encryption::DecryptionError;
 use std::fmt::{Debug, Formatter};
 extern crate encoding_rs;
 extern crate euclid;
@@ -356,6 +355,7 @@ fn encoding_to_unicode_table(name: &[u8]) -> Vec<u16> {
         b"MacRomanEncoding" => encodings::MAC_ROMAN_ENCODING,
         b"MacExpertEncoding" => encodings::MAC_EXPERT_ENCODING,
         b"WinAnsiEncoding" => encodings::WIN_ANSI_ENCODING,
+        b"StandardEncoding" => encodings::STANDARD_ENCODING,
         _ => panic!("unexpected encoding {:?}", pdf_to_utf8(name))
     };
     let encoding_table = encoding.iter()
@@ -2215,32 +2215,25 @@ pub fn print_metadata(doc: &Document) {
     dlog!("Type: {:?}", get_pages(&doc).get(b"Type").and_then(|x| x.as_name()).unwrap());
 }
 
+/// Map a lopdf error to an OutputError, logging a message if the PDF is
+/// password-protected and the caller should use an `_encrypted` variant.
+fn check_password_error(e: lopdf::Error) -> OutputError {
+    if let Error::InvalidPassword = e {
+        error!("Encrypted documents must be decrypted with a password using \
+               {{extract_text|extract_text_from_mem|output_doc}}_encrypted");
+    }
+    OutputError::PdfError(e)
+}
+
 /// Extract the text from a pdf at `path` and return a `String` with the results
 pub fn extract_text<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<String, OutputError> {
     let mut s = String::new();
     {
         let mut output = PlainTextOutput::new(&mut s);
-        let mut doc = Document::load(path)?;
-        maybe_decrypt(&mut doc)?;
+        let doc = Document::load_with_password(path, "").map_err(check_password_error)?;
         output_doc(&doc, &mut output)?;
     }
     Ok(s)
-}
-
-fn maybe_decrypt(doc: &mut Document) -> Result<(), OutputError> {
-    if ! doc.is_encrypted() {
-        return Ok(());
-    }
-
-    if let Err(e) = doc.decrypt("") {
-        if let Error::Decryption(DecryptionError::IncorrectPassword) = e {
-            error!("Encrypted documents must be decrypted with a password using {{extract_text|extract_text_from_mem|output_doc}}_encrypted")
-        }
-
-        return Err(OutputError::PdfError(e));
-    }
-
-    Ok(())
 }
 
 pub fn extract_text_encrypted<P: std::convert::AsRef<std::path::Path>>(
@@ -2250,8 +2243,8 @@ pub fn extract_text_encrypted<P: std::convert::AsRef<std::path::Path>>(
     let mut s = String::new();
     {
         let mut output = PlainTextOutput::new(&mut s);
-        let mut doc = Document::load(path)?;
-        output_doc_encrypted(&mut doc, &mut output, password)?;
+        let doc = Document::load_with_password(path, password)?;
+        output_doc(&doc, &mut output)?;
     }
     Ok(s)
 }
@@ -2260,8 +2253,7 @@ pub fn extract_text_from_mem(buffer: &[u8]) -> Result<String, OutputError> {
     let mut s = String::new();
     {
         let mut output = PlainTextOutput::new(&mut s);
-        let mut doc = Document::load_mem(buffer)?;
-        maybe_decrypt(&mut doc)?;
+        let doc = Document::load_mem_with_password(buffer, "").map_err(check_password_error)?;
         output_doc(&doc, &mut output)?;
     }
     Ok(s)
@@ -2274,8 +2266,8 @@ pub fn extract_text_from_mem_encrypted(
     let mut s = String::new();
     {
         let mut output = PlainTextOutput::new(&mut s);
-        let mut doc = Document::load_mem(buffer)?;
-        output_doc_encrypted(&mut doc, &mut output, password)?;
+        let doc = Document::load_mem_with_password(buffer, password)?;
+        output_doc(&doc, &mut output)?;
     }
     Ok(s)
 }
@@ -2295,8 +2287,7 @@ fn extract_text_by_page(doc: &Document, page_num: u32) -> Result<String, OutputE
 pub fn extract_text_by_pages<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<Vec<String>, OutputError> {
     let mut v = Vec::new();
     {
-        let mut doc = Document::load(path)?;
-        maybe_decrypt(&mut doc)?;
+        let doc = Document::load_with_password(path, "").map_err(check_password_error)?;
         let mut page_num = 1;
         while let Ok(content) = extract_text_by_page(&doc, page_num) {
             v.push(content);
@@ -2309,10 +2300,9 @@ pub fn extract_text_by_pages<P: std::convert::AsRef<std::path::Path>>(path: P) -
 pub fn extract_text_by_pages_encrypted<P: std::convert::AsRef<std::path::Path>>(path: P, password: &str) -> Result<Vec<String>, OutputError> {
     let mut v = Vec::new();
     {
-        let mut doc = Document::load(path)?;
-        doc.decrypt(password)?;
+        let doc = Document::load_with_password(path, password)?;
         let mut page_num = 1;
-        while let Ok(content) = extract_text_by_page(&mut doc, page_num) {
+        while let Ok(content) = extract_text_by_page(&doc, page_num) {
             v.push(content);
             page_num += 1;
         }
@@ -2323,8 +2313,7 @@ pub fn extract_text_by_pages_encrypted<P: std::convert::AsRef<std::path::Path>>(
 pub fn extract_text_from_mem_by_pages(buffer: &[u8]) -> Result<Vec<String>, OutputError> {
     let mut v = Vec::new();
     {
-        let mut doc = Document::load_mem(buffer)?;
-        maybe_decrypt(&mut doc)?;
+        let doc = Document::load_mem_with_password(buffer, "").map_err(check_password_error)?;
         let mut page_num = 1;
         while let Ok(content) = extract_text_by_page(&doc, page_num) {
             v.push(content);
@@ -2337,8 +2326,7 @@ pub fn extract_text_from_mem_by_pages(buffer: &[u8]) -> Result<Vec<String>, Outp
 pub fn extract_text_from_mem_by_pages_encrypted(buffer: &[u8], password: &str) -> Result<Vec<String>, OutputError> {
     let mut v = Vec::new();
     {
-        let mut doc = Document::load_mem(buffer)?;
-        doc.decrypt(password)?;
+        let doc = Document::load_mem_with_password(buffer, password)?;
         let mut page_num = 1;
         while let Ok(content) = extract_text_by_page(&doc, page_num) {
             v.push(content);
@@ -2366,7 +2354,9 @@ pub fn output_doc_encrypted(
     output: &mut dyn OutputDev,
     password: &str,
 ) -> Result<(), OutputError> {
-    doc.decrypt(password)?;
+    if doc.is_encrypted() {
+        doc.decrypt(password)?;
+    }
     output_doc(doc, output)
 }
 
