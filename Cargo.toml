@@ -17,12 +17,12 @@ debug = true
 adobe-cmap-parser = "0.4.1"
 encoding_rs = "0.8.34"
 euclid = "0.20.5"
-lopdf = {version = "0.39", default-features = false, features = ["wasm_js"]}
 postscript = "0.14"
 type1-encoding-parser = "0.1.0"
 unicode-normalization = "0.1.19"
 cff-parser = "0.2.0"
 log = "0.4.22"
+hayro-syntax = "0.5.0"
 
 [dev-dependencies]
 ureq = "2.6.2"
