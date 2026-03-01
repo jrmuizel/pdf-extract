@@ -1599,16 +1599,27 @@ impl<'a> Processor<'a> {
                     let xobj_name = Name::new(&name);
                     let xf: Stream = resources.get_x_object(xobj_name).expect("XObject not found");
                     let xf_dict = xf.dict();
-                    // Build sub-resources: check if the xobject has its own Resources
-                    let sub_resources_dict: Option<Dict> = xf_dict.get::<Dict>(&b"Resources"[..]);
-                    let sub_resources;
-                    if let Some(res_dict) = sub_resources_dict {
-                        sub_resources = Resources::from_parent(res_dict, resources.clone());
-                    } else {
-                        sub_resources = resources.clone();
+                    match xf_dict.get::<Name>(&b"Subtype"[..]).as_deref() {
+                        Some(b"Form") => {
+                            // Build sub-resources: check if the xobject has its own Resources
+                            let sub_resources_dict: Option<Dict> = xf_dict.get::<Dict>(&b"Resources"[..]);
+                            let sub_resources = if let Some(res_dict) = sub_resources_dict {
+                                Resources::from_parent(res_dict, resources.clone())
+                            } else {
+                                resources.clone()
+                            };
+                            let contents = get_stream_contents(&xf);
+                            self.process_stream(&contents, &sub_resources, &media_box, output, page_num)?;
+                        }
+                        _ => {
+                            // As of PDF 1.7, there are three Subtypes: "/Form", "/Image", "/PS".
+                            // Only "/Form" contains nested PDF instructions,
+                            // while "/Image" contains raw binary data, and "/PS" is deprecated.
+                            // For most PDFs, passing image data to process_stream only produces warnings,
+                            // but if the image data happen to contain a byte that can be decoded as an operator,
+                            // the program may crash.
+                        }
                     }
-                    let contents = get_stream_contents(&xf);
-                    self.process_stream(&contents, &sub_resources, &media_box, output, page_num)?;
                 }
                 _ => { dlog!("unknown operation {:?} {:?}", op, operands); }
 
