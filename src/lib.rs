@@ -1634,17 +1634,35 @@ fn make_colorspace_inner<'a>(doc: &'a Document, name: &[u8], resources: &'a Dict
     }
 }
 
+const MAX_NESTING_DEPTH: u32 = 32;
+
 struct Processor<'a> {
     font_table: HashMap<Vec<u8>, Rc<dyn PdfFont + 'a>>,
     _none: PhantomData<&'a ()>,
+    nesting_depth: u32,
 }
 
 impl<'a> Processor<'a> {
     fn new() -> Processor<'a> {
-        Processor { font_table: HashMap::new(), _none: PhantomData }
+        Processor {
+            font_table: HashMap::new(),
+            _none: PhantomData,
+            nesting_depth: 0,
+        }
     }
 
     fn process_stream(&mut self, doc: &'a Document, content: Vec<u8>, resources: &'a Dictionary, media_box: &MediaBox, output: &mut dyn OutputDev, page_num: u32) -> Result<(), OutputError> {
+        if self.nesting_depth >= MAX_NESTING_DEPTH {
+            warn!("maximum nesting depth ({}) exceeded on page {}, skipping nested stream", MAX_NESTING_DEPTH, page_num);
+            return Ok(());
+        }
+        self.nesting_depth += 1;
+        let result = self.process_stream_inner(doc, content, resources, media_box, output, page_num);
+        self.nesting_depth -= 1;
+        result
+    }
+
+    fn process_stream_inner(&mut self, doc: &'a Document, content: Vec<u8>, resources: &'a Dictionary, media_box: &MediaBox, output: &mut dyn OutputDev, page_num: u32) -> Result<(), OutputError> {
         let content = match Content::decode(&content) {
             Ok(c) => c,
             Err(_) => {
@@ -1989,6 +2007,21 @@ pub struct HTMLOutput<'a>  {
     buf: String
 }
 
+fn html_escape(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '&' => result.push_str("&amp;"),
+            '<' => result.push_str("&lt;"),
+            '>' => result.push_str("&gt;"),
+            '"' => result.push_str("&quot;"),
+            '\'' => result.push_str("&#x27;"),
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
 fn insert_nbsp(input: &str) -> String {
     let mut result = String::new();
     let mut word_end = false;
@@ -2031,7 +2064,7 @@ impl<'a> HTMLOutput<'a> {
             warn!("flush {} {:?}", self.buf, (x,y));
 
             write!(self.file, "<div style='position: absolute; left: {}px; top: {}px; font-size: {}px'>{}</div>\n",
-                   x, y, transformed_font_size, insert_nbsp(&self.buf))?;
+                   x, y, transformed_font_size, insert_nbsp(&html_escape(&self.buf)))?;
         }
         Ok(())
     }
@@ -2074,7 +2107,7 @@ impl<'a> OutputDev for HTMLOutput<'a> {
         let transformed_font_size = (transformed_font_size_vec.x * transformed_font_size_vec.y).sqrt();
         let (x, y) = (position.m31, position.m32);
         write!(self.file, "<div style='position: absolute; color: red; left: {}px; top: {}px; font-size: {}px'>{}</div>",
-               x, y, transformed_font_size, char)?;
+               x, y, transformed_font_size, html_escape(char))?;
         self.last_ctm = trm.pre_transform(&Transform2D::create_translation(width * font_size + spacing, 0.));
 
         Ok(())
@@ -2443,7 +2476,17 @@ pub fn extract_text_from_mem_by_pages_encrypted(buffer: &[u8], password: &str) -
 }
 
 
+const MAX_INHERITANCE_DEPTH: u32 = 64;
+
 fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<T> {
+    get_inherited_inner(doc, dict, key, 0)
+}
+
+fn get_inherited_inner<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8], depth: u32) -> Option<T> {
+    if depth >= MAX_INHERITANCE_DEPTH {
+        warn!("maximum inheritance depth ({}) exceeded while looking up {:?}", MAX_INHERITANCE_DEPTH, String::from_utf8_lossy(key));
+        return None;
+    }
     let o: Option<T> = get(doc, dict, key);
     if let Some(o) = o {
         Some(o)
@@ -2451,7 +2494,7 @@ fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, ke
         let parent = dict.get(b"Parent")
             .and_then(|parent| parent.as_reference())
             .and_then(|id| doc.get_dictionary(id)).ok()?;
-        get_inherited(doc, parent, key)
+        get_inherited_inner(doc, parent, key, depth + 1)
     }
 }
 

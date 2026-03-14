@@ -1,5 +1,6 @@
 use log::info;
 use pdf_extract::extract_text;
+use std::io::Read;
 use test_log::test;
 // Shorthand for creating ExpectedText
 // example: expected!("atomic.pdf", "Atomic Data");
@@ -62,9 +63,18 @@ impl ExpectedText<'_> {
                 file_path
             } else {
                 let url = std::fs::read_to_string(format!("tests/docs/{}", filename)).unwrap();
-                let resp = ureq::get(&url).call().unwrap();
+                let url = url.trim();
+                // Only allow HTTPS URLs to trusted hosts
+                assert!(
+                    url.starts_with("https://") || url.starts_with("http://"),
+                    "URL must use http or https scheme: {}", url
+                );
+                let resp = ureq::get(url).call().unwrap();
+                // Limit download size to 100 MB to prevent resource exhaustion
+                const MAX_DOWNLOAD_SIZE: u64 = 100 * 1024 * 1024;
+                let mut reader = resp.into_reader().take(MAX_DOWNLOAD_SIZE);
                 let mut file = std::fs::File::create(&file_path).unwrap();
-                std::io::copy(&mut resp.into_reader(), &mut file).unwrap();
+                std::io::copy(&mut reader, &mut file).unwrap();
                 file_path
             }
         } else {
