@@ -1067,6 +1067,11 @@ impl<'a> PdfCIDFont<'a> {
                 if i + 1 >= w.len() { break; }
                 if let Some(&Object::Array(ref wa)) = w.get(i + 1) {
                     let cid = match w[i].as_i64() { Ok(v) => v, _ => { i += 2; continue; } };
+                    if wa.len() > 65536 {
+                        warn!("CID width array too large ({} entries), skipping", wa.len());
+                        i += 2;
+                        continue;
+                    }
                     let mut j = 0;
                     dlog!("wa: {:?} -> {:?}", cid, wa);
                     for w in wa {
