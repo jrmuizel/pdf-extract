@@ -774,21 +774,25 @@ impl<'a> PdfType3Font<'a> {
             }
         }
 
-        let first_char: i64 = get(doc, font, b"FirstChar");
-        let last_char: i64 = get(doc, font, b"LastChar");
-        let widths: Vec<f64> = get(doc, font, b"Widths");
+        let first_char: Option<i64> = get(doc, font, b"FirstChar");
+        let last_char: Option<i64> = get(doc, font, b"LastChar");
+        let widths: Option<Vec<f64>> = get(doc, font, b"Widths");
 
         let mut width_map = HashMap::new();
 
-        let mut i = 0;
-        dlog!("first_char {:?}, last_char: {:?}, widths: {} {:?}", first_char, last_char, widths.len(), widths);
+        if let (Some(first_char), Some(last_char), Some(widths)) = (first_char, last_char, widths) {
+            let mut i: i64 = 0;
+            dlog!("first_char {:?}, last_char: {:?}, widths: {} {:?}", first_char, last_char, widths.len(), widths);
 
-        for w in widths {
-            width_map.insert((first_char + i) as CharCode, w);
-            i += 1;
-        }
-        if i > 0 && first_char + i - 1 != last_char {
-            warn!("Type3 width count mismatch: first_char={}, count={}, last_char={}", first_char, i, last_char);
+            for w in widths {
+                width_map.insert((first_char + i) as CharCode, w);
+                i += 1;
+            }
+            if i > 0 && first_char + i - 1 != last_char {
+                warn!("Type3 width count mismatch: first_char={}, count={}, last_char={}", first_char, i, last_char);
+            }
+        } else {
+            warn!("Type3 font missing FirstChar, LastChar, or Widths");
         }
         PdfType3Font {doc, font, widths: width_map, encoding: encoding_table, unicode_map}
     }
@@ -1236,10 +1240,22 @@ impl Function {
                     &Object::Stream(ref stream) => stream,
                     _ => { warn!("Type0 function should be a stream"); return None; }
                 };
-                let range: Vec<f64> = get(doc, dict, b"Range");
-                let domain: Vec<f64> = get(doc, dict, b"Domain");
+                let range: Option<Vec<f64>> = get(doc, dict, b"Range");
+                let range = match range {
+                    Some(r) => r,
+                    None => { warn!("Type0 function missing Range"); return None; }
+                };
+                let domain: Option<Vec<f64>> = get(doc, dict, b"Domain");
+                let domain = match domain {
+                    Some(d) => d,
+                    None => { warn!("Type0 function missing Domain"); return None; }
+                };
                 let contents = get_contents(stream);
-                let size: Vec<i64> = get(doc, dict, b"Size");
+                let size: Option<Vec<i64>> = get(doc, dict, b"Size");
+                let size = match size {
+                    Some(s) => s,
+                    None => { warn!("Type0 function missing Size"); return None; }
+                };
                 let bits_per_sample = get::<Option<i64>>(doc, dict, b"BitsPerSample").unwrap_or(8);
                 // We ignore 'Order' like pdfium, poppler and pdf.js
 
@@ -1445,6 +1461,15 @@ impl Path {
     fn new() -> Path {
         Path { ops: Vec::new() }
     }
+    fn push_op(&mut self, op: PathOp) {
+        if self.ops.len() < MAX_PATH_OPS {
+            self.ops.push(op);
+        } else if self.ops.len() == MAX_PATH_OPS {
+            warn!("path operations limit ({}) exceeded, ignoring further ops", MAX_PATH_OPS);
+            // push one more so this warning only fires once
+            self.ops.push(op);
+        }
+    }
     fn current_point(&self) -> (f64, f64) {
         match self.ops.last() {
             Some(&PathOp::MoveTo(x, y)) => { (x, y) }
@@ -1635,6 +1660,8 @@ fn make_colorspace_inner<'a>(doc: &'a Document, name: &[u8], resources: &'a Dict
 }
 
 const MAX_NESTING_DEPTH: u32 = 32;
+const MAX_GS_STACK_DEPTH: usize = 256;
+const MAX_PATH_OPS: usize = 1_000_000;
 
 struct Processor<'a> {
     font_table: HashMap<Vec<u8>, Rc<dyn PdfFont + 'a>>,
@@ -1872,7 +1899,13 @@ impl<'a> Processor<'a> {
                     dlog!("T* matrix {:?}", gs.ts.tm);
                     output.end_line()?;
                 }
-                "q" => { gs_stack.push(gs.clone()); }
+                "q" => {
+                    if gs_stack.len() < MAX_GS_STACK_DEPTH {
+                        gs_stack.push(gs.clone());
+                    } else {
+                        warn!("graphics state stack limit ({}) exceeded, ignoring save", MAX_GS_STACK_DEPTH);
+                    }
+                }
                 "Q" => {
                     let s = gs_stack.pop();
                     if let Some(s) = s {
@@ -1895,11 +1928,11 @@ impl<'a> Processor<'a> {
                 "i" => { dlog!("unhandled graphics state flattness operator {:?}", operation); }
                 "w" => { if let Some(v) = operation.operands.first() { gs.line_width = as_num(v); } }
                 "J" | "j" | "M" | "d" | "ri"  => { dlog!("unknown graphics state operator {:?}", operation); }
-                "m" => { if operation.operands.len() >= 2 { path.ops.push(PathOp::MoveTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) } }
-                "l" => { if operation.operands.len() >= 2 { path.ops.push(PathOp::LineTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) } }
+                "m" => { if operation.operands.len() >= 2 { path.push_op(PathOp::MoveTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) } }
+                "l" => { if operation.operands.len() >= 2 { path.push_op(PathOp::LineTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) } }
                 "c" => {
                     if operation.operands.len() >= 6 {
-                        path.ops.push(PathOp::CurveTo(
+                        path.push_op(PathOp::CurveTo(
                             as_num(&operation.operands[0]),
                             as_num(&operation.operands[1]),
                             as_num(&operation.operands[2]),
@@ -1911,7 +1944,7 @@ impl<'a> Processor<'a> {
                 "v" => {
                     if operation.operands.len() >= 4 {
                         let (x, y) = path.current_point();
-                        path.ops.push(PathOp::CurveTo(
+                        path.push_op(PathOp::CurveTo(
                             x,
                             y,
                             as_num(&operation.operands[0]),
@@ -1922,7 +1955,7 @@ impl<'a> Processor<'a> {
                 }
                 "y" => {
                     if operation.operands.len() >= 4 {
-                        path.ops.push(PathOp::CurveTo(
+                        path.push_op(PathOp::CurveTo(
                             as_num(&operation.operands[0]),
                             as_num(&operation.operands[1]),
                             as_num(&operation.operands[2]),
@@ -1931,10 +1964,10 @@ impl<'a> Processor<'a> {
                             as_num(&operation.operands[3])))
                     }
                 }
-                "h" => { path.ops.push(PathOp::Close) }
+                "h" => { path.push_op(PathOp::Close) }
                 "re" => {
                     if operation.operands.len() >= 4 {
-                        path.ops.push(PathOp::Rect(as_num(&operation.operands[0]),
+                        path.push_op(PathOp::Rect(as_num(&operation.operands[0]),
                                                    as_num(&operation.operands[1]),
                                                    as_num(&operation.operands[2]),
                                                    as_num(&operation.operands[3])))
@@ -1957,7 +1990,11 @@ impl<'a> Processor<'a> {
                     path.ops.clear();
                 }
                 "BMC" | "BDC" => {
-                    mc_stack.push(operation);
+                    if mc_stack.len() < MAX_GS_STACK_DEPTH {
+                        mc_stack.push(operation);
+                    } else {
+                        warn!("marked content stack limit ({}) exceeded, ignoring", MAX_GS_STACK_DEPTH);
+                    }
                 }
                 "EMC" => {
                     mc_stack.pop();
