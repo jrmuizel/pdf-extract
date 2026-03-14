@@ -1081,6 +1081,12 @@ impl<'a> PdfCIDFont<'a> {
                     let c_first = match w[i].as_i64() { Ok(v) => v, _ => { i += 3; continue; } };
                     let c_last = match w.get(i + 1).and_then(|o| o.as_i64().ok()) { Some(v) => v, _ => { i += 3; continue; } };
                     let c_width = match w.get(i + 2).and_then(|o| try_as_num(o)) { Some(v) => v, _ => { i += 3; continue; } };
+                    // Limit range to prevent resource exhaustion from malformed CID width ranges
+                    if c_last.saturating_sub(c_first) > 65536 {
+                        warn!("CID width range too large ({} to {}), skipping", c_first, c_last);
+                        i += 3;
+                        continue;
+                    }
                     for id in c_first..=c_last {
                         widths.insert(id as CharCode, c_width);
                     }
@@ -1574,7 +1580,7 @@ fn make_colorspace_inner<'a>(doc: &'a Document, name: &[u8], resources: &'a Dict
                             "CalGray" => {
                                 let dict = cs.get(1)?.as_dict().ok()?;
                                 AlternateColorSpace::CalGray(CalGray {
-                                    white_point: get(&doc, dict, b"WhitePoint"),
+                                    white_point: get::<Option<[f64; 3]>>(&doc, dict, b"WhitePoint")?,
                                     black_point: get(&doc, dict, b"BackPoint"),
                                     gamma: get(&doc, dict, b"Gamma"),
                                 })
@@ -1582,7 +1588,7 @@ fn make_colorspace_inner<'a>(doc: &'a Document, name: &[u8], resources: &'a Dict
                             "CalRGB" => {
                                 let dict = cs.get(1)?.as_dict().ok()?;
                                 AlternateColorSpace::CalRGB(CalRGB {
-                                    white_point: get(&doc, dict, b"WhitePoint"),
+                                    white_point: get::<Option<[f64; 3]>>(&doc, dict, b"WhitePoint")?,
                                     black_point: get(&doc, dict, b"BackPoint"),
                                     gamma: get(&doc, dict, b"Gamma"),
                                     matrix: get(&doc, dict, b"Matrix"),
@@ -1591,7 +1597,7 @@ fn make_colorspace_inner<'a>(doc: &'a Document, name: &[u8], resources: &'a Dict
                             "Lab" => {
                                 let dict = cs.get(1)?.as_dict().ok()?;
                                 AlternateColorSpace::Lab(Lab {
-                                    white_point: get(&doc, dict, b"WhitePoint"),
+                                    white_point: get::<Option<[f64; 3]>>(&doc, dict, b"WhitePoint")?,
                                     black_point: get(&doc, dict, b"BackPoint"),
                                     range: get(&doc, dict, b"Range"),
                                 })
@@ -1614,7 +1620,7 @@ fn make_colorspace_inner<'a>(doc: &'a Document, name: &[u8], resources: &'a Dict
             "CalGray" => {
                 let dict = cs.get(1)?.as_dict().ok()?;
                 Some(ColorSpace::CalGray(CalGray {
-                    white_point: get(&doc, dict, b"WhitePoint"),
+                    white_point: get::<Option<[f64; 3]>>(&doc, dict, b"WhitePoint")?,
                     black_point: get(&doc, dict, b"BackPoint"),
                     gamma: get(&doc, dict, b"Gamma"),
                 }))
@@ -1622,7 +1628,7 @@ fn make_colorspace_inner<'a>(doc: &'a Document, name: &[u8], resources: &'a Dict
             "CalRGB" => {
                 let dict = cs.get(1)?.as_dict().ok()?;
                 Some(ColorSpace::CalRGB(CalRGB {
-                    white_point: get(&doc, dict, b"WhitePoint"),
+                    white_point: get::<Option<[f64; 3]>>(&doc, dict, b"WhitePoint")?,
                     black_point: get(&doc, dict, b"BackPoint"),
                     gamma: get(&doc, dict, b"Gamma"),
                     matrix: get(&doc, dict, b"Matrix"),
@@ -1631,7 +1637,7 @@ fn make_colorspace_inner<'a>(doc: &'a Document, name: &[u8], resources: &'a Dict
             "Lab" => {
                 let dict = cs.get(1)?.as_dict().ok()?;
                 Some(ColorSpace::Lab(Lab {
-                    white_point: get(&doc, dict, b"WhitePoint"),
+                    white_point: get::<Option<[f64; 3]>>(&doc, dict, b"WhitePoint")?,
                     black_point: get(&doc, dict, b"BackPoint"),
                     range: get(&doc, dict, b"Range"),
                 }))
