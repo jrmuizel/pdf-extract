@@ -12,6 +12,9 @@ use simple_logger::SimpleLogger;
 
 fn main() {
     SimpleLogger::new().init().unwrap();
+    //let output_kind = "html";
+    //let output_kind = "txt";
+    //let output_kind = "svg";
     let file = env::args().nth(1).unwrap();
     let output_kind = env::args().nth(2).unwrap_or_else(|| "txt".to_owned());
     println!("{}", file);
@@ -22,9 +25,9 @@ fn main() {
     output_file.set_extension(&output_kind);
     let mut output_file = BufWriter::new(File::create(output_file).expect("could not create output"));
     let data = std::fs::read(path).unwrap();
-    let pdf = Pdf::new(Arc::new(data)).unwrap();
+    let doc = Pdf::new(Arc::new(data)).unwrap();
 
-    print_metadata(&pdf);
+    print_metadata(&doc);
 
     let mut output: Box<dyn OutputDev> = match output_kind.as_ref() {
         "txt" => Box::new(PlainTextOutput::new(&mut output_file as &mut dyn std::io::Write)),
@@ -33,5 +36,5 @@ fn main() {
         _ => panic!(),
     };
 
-    output_doc(&pdf, output.as_mut()).unwrap();
+    output_doc(&doc, output.as_mut()).unwrap();
 }
