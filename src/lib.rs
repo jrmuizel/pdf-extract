@@ -72,7 +72,7 @@ impl From<lopdf::Error> for OutputError {
 }
 
 macro_rules! dlog {
-    ($($e:expr),*) => { {$(let _ = $e;)*} }
+    ($($e:expr),*) => { {} }
     //($($t:tt)*) => { println!($($t)*) }
 }
 
