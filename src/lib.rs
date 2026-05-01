@@ -1529,8 +1529,9 @@ impl<'a> Processor<'a> {
                 b"gs" => {
                     let name = operands[0].clone().into_name().unwrap();
                     let gs_name = Name::new(&name);
-                    let state: Dict = resources.get_ext_g_state(gs_name).expect("ExtGState not found");
-                    apply_state(&mut gs, &state);
+                    if let Some(state) = resources.get_ext_g_state(gs_name) {
+                        apply_state(&mut gs, &state);
+                    }
                 }
                 b"i" => { dlog!("unhandled graphics state flattness operator {:?}", operands); }
                 b"w" => { gs.line_width = as_num(&operands[0]); }
