@@ -200,9 +200,20 @@ impl<'a, T: FromObj<'a>> FromOptObj<'a> for Option<T> {
     }
 }
 
-impl<'a, T: FromObj<'a>> FromOptObj<'a> for T {
+// Bare (non-Option) target. A malformed PDF can omit a required key or give it the
+// wrong type; rather than `panic!` (which, under a `panic = "abort"` consumer, would
+// kill the whole process on a single crafted file), warn and fall back to the type's
+// default so extraction can continue. Callers that need to observe a missing/mistyped
+// key should request `get::<Option<T>>` instead, which never substitutes a default.
+impl<'a, T: FromObj<'a> + Default> FromOptObj<'a> for T {
     fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &[u8]) -> Self {
-        T::from_obj(doc, obj.expect(&format!("missing key {:?}", String::from_utf8_lossy(key)))).expect(&format!("wrong type for key {:?}", String::from_utf8_lossy(key)))
+        match obj.and_then(|o| T::from_obj(doc, o)) {
+            Some(v) => v,
+            None => {
+                warn!("missing or wrong-typed key {:?}, using default", String::from_utf8_lossy(key));
+                T::default()
+            }
+        }
     }
 }
 
