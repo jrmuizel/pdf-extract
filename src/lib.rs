@@ -2401,6 +2401,11 @@ pub fn output_doc_page(doc: &Document, output: &mut dyn OutputDev, page_num: u32
 fn output_doc_inner<'a>(page_num: u32, object_id: ObjectId, doc: &'a Document, p: & mut Processor<'a>, output: &mut dyn OutputDev, empty_resources: &'a Dictionary) -> Result<(), OutputError> {
     let page_dict = doc.get_object(object_id).unwrap().as_dict().unwrap();
     dlog!("page {} {:?}", page_num, page_dict);
+    // Font resource names (e.g. /F0) are only unique within a page's resource
+    // dictionary; the same name can map to a different font on the next page.
+    // Reset the font cache per page so a stale entry from an earlier page isn't
+    // reused, which would decode text with the wrong font's ToUnicode CMap.
+    p.font_table.clear();
     // XXX: Some pdfs lack a Resources directory
     let resources = get_inherited(doc, page_dict, b"Resources").unwrap_or(empty_resources);
     dlog!("resources {:?}", resources);
