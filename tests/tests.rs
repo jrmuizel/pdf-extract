@@ -1,5 +1,6 @@
 use log::info;
 use pdf_extract::extract_text;
+use std::io::Write;
 use test_log::test;
 // Shorthand for creating ExpectedText
 // example: expected!("atomic.pdf", "Atomic Data");
@@ -32,6 +33,60 @@ fn extract_all_docs() {
         let filename = path.file_name().unwrap().to_string_lossy();
         expected!(&filename, "").test();
     }
+}
+
+#[test]
+fn ignores_malformed_curve_operator() {
+    let pdf = minimal_pdf_with_content(
+        b"BT /F1 12 Tf 72 720 Td (Curve operand regression) Tj ET\n0 0 m\nc\nS\n",
+    );
+    let path = std::env::temp_dir().join(format!(
+        "pdf_extract_malformed_curve_{}.pdf",
+        std::process::id()
+    ));
+    let mut file = std::fs::File::create(&path).unwrap();
+    file.write_all(&pdf).unwrap();
+
+    let out = extract_text(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(out.contains("Curve operand regression"), "output was: {}", out);
+}
+
+fn minimal_pdf_with_content(content: &[u8]) -> Vec<u8> {
+    let mut objects = vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>".to_vec(),
+        format!("<< /Length {} >>\nstream\n", content.len()).into_bytes(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+    ];
+    objects[3].extend_from_slice(content);
+    objects[3].extend_from_slice(b"endstream");
+
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::new();
+    for (idx, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n", idx + 1).as_bytes());
+        pdf.extend_from_slice(object);
+        pdf.extend_from_slice(b"\nendobj\n");
+    }
+
+    let xref_offset = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+    pdf.extend_from_slice(b"0000000000 65535 f \n");
+    for offset in offsets {
+        pdf.extend_from_slice(format!("{:010} 00000 n \n", offset).as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
+            objects.len() + 1,
+            xref_offset
+        )
+        .as_bytes(),
+    );
+    pdf
 }
 
 // data structure to make it easy to check if certain files are correctly parsed
