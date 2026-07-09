@@ -1273,10 +1273,45 @@ struct GraphicsState<'a>
     line_width: f64,
 }
 
+/// An in-progress `/ActualText` marked-content region. While one is active the drawn
+/// glyphs are not emitted; the authored replacement text is emitted once, as a single
+/// positioned run, when the matching `EMC` closes the region.
+struct ActualText {
+    text: String,
+    /// `mc_stack` length right after the opening `BDC` was pushed; used to find the
+    /// matching `EMC` and to tolerate nested marked content.
+    depth: usize,
+    /// Text rendering matrix of the first suppressed glyph (the run's start point).
+    start_trm: Option<Transform>,
+    font_size: f64,
+    /// Accumulated glyph advance (sum of w0). This only positions the seam to the
+    /// following text; the replacement string itself is emitted verbatim.
+    width: f64,
+}
+
+/// Pull an `/ActualText` string out of a `BDC` operator's property operand, which is
+/// either an inline dictionary or a name referencing the page's `/Properties`
+/// resource. Returns `None` for `BMC` (no properties) or spans without `/ActualText`.
+fn actual_text_from_bdc(doc: &Document, resources: &Dictionary, operands: &[Object]) -> Option<String> {
+    let dict = match operands.get(1)? {
+        Object::Dictionary(d) => d,
+        Object::Name(name) => {
+            let props = maybe_get_obj(doc, resources, b"Properties")?.as_dict().ok()?;
+            maybe_get_obj(doc, props, name)?.as_dict().ok()?
+        }
+        _ => return None,
+    };
+    match maybe_get_obj(doc, dict, b"ActualText")? {
+        Object::String(s, _) => Some(pdf_to_utf8(s)),
+        _ => None,
+    }
+}
+
 fn show_text(gs: &mut GraphicsState, s: &[u8],
              _tlm: &Transform,
              _flip_ctm: &Transform,
-             output: &mut dyn OutputDev) -> Result<(), OutputError> {
+             output: &mut dyn OutputDev,
+             actual_text: &mut Option<ActualText>) -> Result<(), OutputError> {
     let ts = &mut gs.ts;
     let font = ts.font.as_ref().unwrap();
     //let encoding = font.encoding.as_ref().map(|x| &x[..]).unwrap_or(&PDFDocEncoding);
@@ -1311,7 +1346,22 @@ fn show_text(gs: &mut GraphicsState, s: &[u8],
         let is_space = c == 32 && length == 1;
         if is_space { spacing += ts.word_spacing }
 
-        output.output_character(&trm, w0, spacing, ts.font_size, &font.decode_char(c))?;
+        match actual_text {
+            Some(at) => {
+                if at.start_trm.is_none() {
+                    at.start_trm = Some(trm);
+                    at.font_size = ts.font_size;
+                }
+                // Width only drives the spacing seam to the following text (the run is
+                // flushed at EMC); the ActualText itself is emitted verbatim. Summing
+                // glyph advances matches output_character's existing last_end
+                // convention, which likewise ignores Tc/Tw spacing.
+                at.width += w0;
+            }
+            None => {
+                output.output_character(&trm, w0, spacing, ts.font_size, &font.decode_char(c))?;
+            }
+        }
         let tj = 0.;
         let ty = 0.;
         let tx = ts.horizontal_scaling * ((w0 - tj/1000.)* ts.font_size + spacing);
@@ -1602,6 +1652,7 @@ impl<'a> Processor<'a> {
         //let mut ts = &mut gs.ts;
         let mut gs_stack = Vec::new();
         let mut mc_stack = Vec::new();
+        let mut actual_text: Option<ActualText> = None;
         // XXX: replace tlm with a point for text start
         let mut tlm = Transform2D::identity();
         let mut path = Path::new();
@@ -1659,7 +1710,7 @@ impl<'a> Processor<'a> {
                             for e in array {
                                 match e {
                                     &Object::String(ref s, _) => {
-                                        show_text(&mut gs, s, &tlm, &flip_ctm, output)?;
+                                        show_text(&mut gs, s, &tlm, &flip_ctm, output, &mut actual_text)?;
                                     }
                                     &Object::Integer(i) => {
                                         let ts = &mut gs.ts;
@@ -1689,7 +1740,7 @@ impl<'a> Processor<'a> {
                 "Tj" => {
                     match operation.operands[0] {
                         Object::String(ref s, _) => {
-                            show_text(&mut gs, s, &tlm, &flip_ctm, output)?;
+                            show_text(&mut gs, s, &tlm, &flip_ctm, output, &mut actual_text)?;
                         }
                         _ => { panic!("unexpected Tj operand {:?}", operation) }
                     }
@@ -1853,8 +1904,31 @@ impl<'a> Processor<'a> {
                 }
                 "BMC" | "BDC" => {
                     mc_stack.push(operation);
+                    // Only the outermost ActualText span wins; nested spans are ignored
+                    // until it closes.
+                    if actual_text.is_none() {
+                        if let Some(text) = actual_text_from_bdc(doc, resources, &operation.operands) {
+                            actual_text = Some(ActualText {
+                                text,
+                                depth: mc_stack.len(),
+                                start_trm: None,
+                                font_size: 0.,
+                                width: 0.,
+                            });
+                        }
+                    }
                 }
                 "EMC" => {
+                    // Compare before popping: the matching EMC runs while our frame is
+                    // still on top, so the stack length equals the captured depth.
+                    if actual_text.as_ref().map_or(false, |at| at.depth == mc_stack.len()) {
+                        let at = actual_text.take().unwrap();
+                        if let Some(trm) = at.start_trm {
+                            output.begin_word()?;
+                            output.output_character(&trm, at.width, 0., at.font_size, &at.text)?;
+                            output.end_word()?;
+                        }
+                    }
                     mc_stack.pop();
                 }
                 "Do" => {
@@ -2413,4 +2487,87 @@ fn output_doc_inner<'a>(page_num: u32, object_id: ObjectId, doc: &'a Document, p
     p.process_stream(&doc, doc.get_page_content(object_id).unwrap(), resources, &media_box, output, page_num)?;
     output.end_page()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod actual_text_tests {
+    use super::*;
+    use lopdf::content::{Content, Operation};
+
+    /// Build a one-page PDF that draws `drawn` inside a marked-content span carrying
+    /// `/ActualText (actual)` (inline dictionary form), mimicking how Typst tags small
+    /// caps. `drawn` and `actual` are made deliberately different so the two can be told
+    /// apart in the extracted text.
+    fn pdf_with_actual_text(drawn: &str, actual: &str) -> Vec<u8> {
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+
+        let mut font = Dictionary::new();
+        font.set("Type", "Font");
+        font.set("Subtype", "Type1");
+        font.set("BaseFont", "Helvetica");
+        let font_id = doc.add_object(font);
+
+        let mut fonts = Dictionary::new();
+        fonts.set("F1", Object::Reference(font_id));
+        let mut resources = Dictionary::new();
+        resources.set("Font", Object::Dictionary(fonts));
+        let resources_id = doc.add_object(resources);
+
+        let mut props = Dictionary::new();
+        props.set("ActualText", Object::string_literal(actual));
+
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 24.into()]),
+                Operation::new("Td", vec![72.into(), 720.into()]),
+                Operation::new("BDC", vec!["Span".into(), Object::Dictionary(props)]),
+                Operation::new("Tj", vec![Object::string_literal(drawn)]),
+                Operation::new("EMC", vec![]),
+                Operation::new("ET", vec![]),
+            ],
+        };
+        let content_id = doc.add_object(Stream::new(Dictionary::new(), content.encode().unwrap()));
+
+        let mut page = Dictionary::new();
+        page.set("Type", "Page");
+        page.set("Parent", Object::Reference(pages_id));
+        page.set("Contents", Object::Reference(content_id));
+        page.set("Resources", Object::Reference(resources_id));
+        page.set("MediaBox", Object::Array(vec![0.into(), 0.into(), 612.into(), 792.into()]));
+        let page_id = doc.add_object(page);
+
+        let mut pages = Dictionary::new();
+        pages.set("Type", "Pages");
+        pages.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        pages.set("Count", 1);
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+        let mut catalog = Dictionary::new();
+        catalog.set("Type", "Catalog");
+        catalog.set("Pages", Object::Reference(pages_id));
+        let catalog_id = doc.add_object(catalog);
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf).unwrap();
+        buf
+    }
+
+    #[test]
+    fn actual_text_overrides_drawn_glyphs() {
+        let pdf = pdf_with_actual_text("HELLO MEMBER", "Hello Member");
+        let text = extract_text_from_mem(&pdf).expect("extract text");
+        assert!(
+            text.contains("Hello Member"),
+            "expected the /ActualText string, got: {:?}",
+            text
+        );
+        assert!(
+            !text.contains("HELLO MEMBER"),
+            "drawn glyphs leaked instead of /ActualText, got: {:?}",
+            text
+        );
+    }
 }
