@@ -1238,6 +1238,21 @@ fn as_num(o: &Object) -> f64 {
     }
 }
 
+/// Numeric operand accessor that tolerates malformed content streams.
+///
+/// A content stream produced by a non-conformant writer can carry an operator
+/// with fewer operands than the spec requires (e.g. `w` with no width) or with
+/// a non-numeric operand. Indexing `operands[i]` and calling `as_num` directly
+/// panics on such input; this returns 0.0 instead so text extraction can
+/// continue rather than aborting the whole document.
+fn operand_num(operands: &[Object], i: usize) -> f64 {
+    match operands.get(i) {
+        Some(&Object::Integer(n)) => n as f64,
+        Some(&Object::Real(f)) => f.into(),
+        _ => 0.0,
+    }
+}
+
 #[derive(Clone)]
 struct TextState<'a>
 {
@@ -1621,21 +1636,21 @@ impl<'a> Processor<'a> {
                 }
                 "cm" => {
                     assert!(operation.operands.len() == 6);
-                    let m = Transform2D::row_major(as_num(&operation.operands[0]),
-                                                   as_num(&operation.operands[1]),
-                                                   as_num(&operation.operands[2]),
-                                                   as_num(&operation.operands[3]),
-                                                   as_num(&operation.operands[4]),
-                                                   as_num(&operation.operands[5]));
+                    let m = Transform2D::row_major(operand_num(&operation.operands, 0),
+                                                   operand_num(&operation.operands, 1),
+                                                   operand_num(&operation.operands, 2),
+                                                   operand_num(&operation.operands, 3),
+                                                   operand_num(&operation.operands, 4),
+                                                   operand_num(&operation.operands, 5));
                     gs.ctm = gs.ctm.pre_transform(&m);
                     dlog!("matrix {:?}", gs.ctm);
                 }
                 "CS" => {
-                    let name = operation.operands[0].as_name().unwrap();
+                    let name = match operation.operands.first().and_then(|o| o.as_name().ok()) { Some(n) => n, None => continue };
                     gs.stroke_colorspace = make_colorspace(doc, name, resources);
                 }
                 "cs" => {
-                    let name = operation.operands[0].as_name().unwrap();
+                    let name = match operation.operands.first().and_then(|o| o.as_name().ok()) { Some(n) => n, None => continue };
                     gs.fill_colorspace = make_colorspace(doc, name, resources);
                 }
                 "SC" | "SCN" => {
@@ -1654,6 +1669,7 @@ impl<'a> Processor<'a> {
                     dlog!("unhandled color operation {:?}", operation);
                 }
                 "TJ" => {
+                    if operation.operands.is_empty() { continue; }
                     match operation.operands[0] {
                         Object::Array(ref array) => {
                             for e in array {
@@ -1687,6 +1703,7 @@ impl<'a> Processor<'a> {
                     }
                 }
                 "Tj" => {
+                    if operation.operands.is_empty() { continue; }
                     match operation.operands[0] {
                         Object::String(ref s, _) => {
                             show_text(&mut gs, s, &tlm, &flip_ctm, output)?;
@@ -1695,20 +1712,20 @@ impl<'a> Processor<'a> {
                     }
                 }
                 "Tc" => {
-                    gs.ts.character_spacing = as_num(&operation.operands[0]);
+                    gs.ts.character_spacing = operand_num(&operation.operands, 0);
                 }
                 "Tw" => {
-                    gs.ts.word_spacing = as_num(&operation.operands[0]);
+                    gs.ts.word_spacing = operand_num(&operation.operands, 0);
                 }
                 "Tz" => {
-                    gs.ts.horizontal_scaling = as_num(&operation.operands[0]) / 100.;
+                    gs.ts.horizontal_scaling = operand_num(&operation.operands, 0) / 100.;
                 }
                 "TL" => {
-                    gs.ts.leading = as_num(&operation.operands[0]);
+                    gs.ts.leading = operand_num(&operation.operands, 0);
                 }
                 "Tf" => {
                     let fonts: &Dictionary = get(&doc, resources, b"Font");
-                    let name = operation.operands[0].as_name().unwrap();
+                    let name = match operation.operands.first().and_then(|o| o.as_name().ok()) { Some(n) => n, None => continue };
                     let font = self.font_table.entry(name.to_owned()).or_insert_with(|| make_font(doc, get::<&Dictionary>(doc, fonts, name))).clone();
                     {
                         /*let file = font.get_descriptor().and_then(|desc| desc.get_file());
@@ -1721,20 +1738,20 @@ impl<'a> Processor<'a> {
                     }
                     gs.ts.font = Some(font);
 
-                    gs.ts.font_size = as_num(&operation.operands[1]);
+                    gs.ts.font_size = operand_num(&operation.operands, 1);
                     dlog!("font {} size: {} {:?}", pdf_to_utf8(name), gs.ts.font_size, operation);
                 }
                 "Ts" => {
-                    gs.ts.rise = as_num(&operation.operands[0]);
+                    gs.ts.rise = operand_num(&operation.operands, 0);
                 }
                 "Tm" => {
                     assert!(operation.operands.len() == 6);
-                    tlm = Transform2D::row_major(as_num(&operation.operands[0]),
-                                                 as_num(&operation.operands[1]),
-                                                 as_num(&operation.operands[2]),
-                                                 as_num(&operation.operands[3]),
-                                                 as_num(&operation.operands[4]),
-                                                 as_num(&operation.operands[5]));
+                    tlm = Transform2D::row_major(operand_num(&operation.operands, 0),
+                                                 operand_num(&operation.operands, 1),
+                                                 operand_num(&operation.operands, 2),
+                                                 operand_num(&operation.operands, 3),
+                                                 operand_num(&operation.operands, 4),
+                                                 operand_num(&operation.operands, 5));
                     gs.ts.tm = tlm;
                     dlog!("Tm: matrix {:?}", gs.ts.tm);
                     output.end_line()?;
@@ -1745,8 +1762,8 @@ impl<'a> Processor<'a> {
                    More precisely, this operator performs the following assignments:
                  */
                     assert!(operation.operands.len() == 2);
-                    let tx = as_num(&operation.operands[0]);
-                    let ty = as_num(&operation.operands[1]);
+                    let tx = operand_num(&operation.operands, 0);
+                    let ty = operand_num(&operation.operands, 1);
                     dlog!("translation: {} {}", tx, ty);
 
                     tlm = tlm.pre_transform(&Transform2D::create_translation(tx, ty));
@@ -1760,8 +1777,8 @@ impl<'a> Processor<'a> {
                    As a side effect, this operator sets the leading parameter in the text state.
                  */
                     assert!(operation.operands.len() == 2);
-                    let tx = as_num(&operation.operands[0]);
-                    let ty = as_num(&operation.operands[1]);
+                    let tx = operand_num(&operation.operands, 0);
+                    let ty = operand_num(&operation.operands, 1);
                     dlog!("translation: {} {}", tx, ty);
                     gs.ts.leading = -ty;
 
@@ -1791,49 +1808,49 @@ impl<'a> Processor<'a> {
                 }
                 "gs" => {
                     let ext_gstate: &Dictionary = get(doc, resources, b"ExtGState");
-                    let name = operation.operands[0].as_name().unwrap();
+                    let name = match operation.operands.first().and_then(|o| o.as_name().ok()) { Some(n) => n, None => continue };
                     let state: &Dictionary = get(doc, ext_gstate, name);
                     apply_state(doc, &mut gs, state);
                 }
                 "i" => { dlog!("unhandled graphics state flattness operator {:?}", operation); }
-                "w" => { gs.line_width = as_num(&operation.operands[0]); }
+                "w" => { gs.line_width = operand_num(&operation.operands, 0); }
                 "J" | "j" | "M" | "d" | "ri"  => { dlog!("unknown graphics state operator {:?}", operation); }
-                "m" => { path.ops.push(PathOp::MoveTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) }
-                "l" => { path.ops.push(PathOp::LineTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) }
+                "m" => { path.ops.push(PathOp::MoveTo(operand_num(&operation.operands, 0), operand_num(&operation.operands, 1))) }
+                "l" => { path.ops.push(PathOp::LineTo(operand_num(&operation.operands, 0), operand_num(&operation.operands, 1))) }
                 "c" => {
                     path.ops.push(PathOp::CurveTo(
-                        as_num(&operation.operands[0]),
-                        as_num(&operation.operands[1]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3]),
-                        as_num(&operation.operands[4]),
-                        as_num(&operation.operands[5])))
+                        operand_num(&operation.operands, 0),
+                        operand_num(&operation.operands, 1),
+                        operand_num(&operation.operands, 2),
+                        operand_num(&operation.operands, 3),
+                        operand_num(&operation.operands, 4),
+                        operand_num(&operation.operands, 5)))
                 }
                 "v" => {
                     let (x, y) = path.current_point();
                     path.ops.push(PathOp::CurveTo(
                         x,
                         y,
-                        as_num(&operation.operands[0]),
-                        as_num(&operation.operands[1]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3])))
+                        operand_num(&operation.operands, 0),
+                        operand_num(&operation.operands, 1),
+                        operand_num(&operation.operands, 2),
+                        operand_num(&operation.operands, 3)))
                 }
                 "y" => {
                     path.ops.push(PathOp::CurveTo(
-                        as_num(&operation.operands[0]),
-                        as_num(&operation.operands[1]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3])))
+                        operand_num(&operation.operands, 0),
+                        operand_num(&operation.operands, 1),
+                        operand_num(&operation.operands, 2),
+                        operand_num(&operation.operands, 3),
+                        operand_num(&operation.operands, 2),
+                        operand_num(&operation.operands, 3)))
                 }
                 "h" => { path.ops.push(PathOp::Close) }
                 "re" => {
-                    path.ops.push(PathOp::Rect(as_num(&operation.operands[0]),
-                                               as_num(&operation.operands[1]),
-                                               as_num(&operation.operands[2]),
-                                               as_num(&operation.operands[3])))
+                    path.ops.push(PathOp::Rect(operand_num(&operation.operands, 0),
+                                               operand_num(&operation.operands, 1),
+                                               operand_num(&operation.operands, 2),
+                                               operand_num(&operation.operands, 3)))
                 }
                 "s" | "f*" | "B" | "B*" | "b" => {
                     dlog!("unhandled path op {:?}", operation);
@@ -1861,7 +1878,7 @@ impl<'a> Processor<'a> {
                     // `Do` process an entire subdocument, so we do a recursive call to `process_stream`
                     // with the subdocument content and resources
                     let xobject: &Dictionary = get(&doc, resources, b"XObject");
-                    let name = operation.operands[0].as_name().unwrap();
+                    let name = match operation.operands.first().and_then(|o| o.as_name().ok()) { Some(n) => n, None => continue };
                     let xf: &Stream = get(&doc, xobject, name);
                     let resources = maybe_get_obj(&doc, &xf.dict, b"Resources").and_then(|n| n.as_dict().ok()).unwrap_or(resources);
                     let contents = get_contents(xf);
@@ -2413,4 +2430,32 @@ fn output_doc_inner<'a>(page_num: u32, object_id: ObjectId, doc: &'a Document, p
     p.process_stream(&doc, doc.get_page_content(object_id).unwrap(), resources, &media_box, output, page_num)?;
     output.end_page()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod operand_tests {
+    use super::operand_num;
+    use lopdf::Object;
+
+    #[test]
+    fn operand_num_reads_numeric_operands() {
+        let ops = vec![Object::Integer(3), Object::Real(1.5)];
+        assert_eq!(operand_num(&ops, 0), 3.0);
+        assert_eq!(operand_num(&ops, 1), 1.5);
+    }
+
+    #[test]
+    fn operand_num_tolerates_missing_operand() {
+        // A malformed content stream can emit an operator with too few operands
+        // (e.g. `w` with no width). This must not panic.
+        let ops: Vec<Object> = vec![];
+        assert_eq!(operand_num(&ops, 0), 0.0);
+        assert_eq!(operand_num(&[Object::Integer(1)], 5), 0.0);
+    }
+
+    #[test]
+    fn operand_num_tolerates_non_numeric_operand() {
+        let ops = vec![Object::Name(b"Foo".to_vec())];
+        assert_eq!(operand_num(&ops, 0), 0.0);
+    }
 }
