@@ -1,3 +1,7 @@
+// Cargo normally caps lints for registry dependencies. Keep the same behavior
+// for this path patch so upstream 0.12.0 warnings do not fail Syzygy's gates.
+#![allow(warnings)]
+
 extern crate lopdf;
 
 use adobe_cmap_parser::{ByteMapping, CodeRange, CIDRange};
