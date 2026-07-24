@@ -17,6 +17,14 @@ and assertion calls. The pinned parser revisions were audited with the same
 scope; their remaining unwrap/assert calls are test-only, while CFF production
 code retains debug-only invariant assertions guarded by input validation.
 
+The unused `postscript` dependency was removed. `pdf-extract` never referenced
+it, and its production parser contains unimplemented operators that should not
+remain in the desktop dependency graph without a call site or regression test.
+The `lopdf` extraction path was also reviewed: remaining explicit panic sites
+are test-only, outside text extraction, or guarded by parser/internal-state
+invariants; no second malformed-input abort equivalent to the Type3 failure was
+identified.
+
 Validation:
 
 ```text
