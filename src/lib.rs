@@ -488,10 +488,14 @@ impl<'a> PdfSimpleFont<'a> {
         // Arbortext Type1C subsets keep Standard-slot names (Oslash at
         // 0xE9) where the declared WinAnsi text means eacute. The map
         // stays present-but-empty so a Differences entry with an
-        // unresolvable name (issue #76) can still register into it.
+        // unresolvable name (issue #76) can still register into it; the cost
+        // is that `decode_char` then misses on every code and logs a debug
+        // line for it, which `log` builds lazily and so costs nothing unless
+        // that level is on.
         if matches!(encoding, Some(&Object::Name(_)) | Some(&Object::Dictionary(_))) {
             unicode_map = unicode_map.map(|_| HashMap::new());
         }
+
         let mut unicode_map = match unicode_map {
             Some(mut unicode_map) => {
                 unicode_map.extend(get_unicode_map(doc, font).unwrap_or(HashMap::new()));
@@ -514,7 +518,7 @@ impl<'a> PdfSimpleFont<'a> {
                 let mut table = if let Some(base_encoding) = maybe_get_name(doc, encoding, b"BaseEncoding") {
                     dlog!("BaseEncoding {:?}", base_encoding);
                     encoding_to_unicode_table(base_encoding)
-                } else if let (Some(builtin), true) = (builtin_base.clone(), symbolic) {
+                } else if let (Some(builtin), true) = (builtin_base.as_deref(), symbolic) {
                     // No BaseEncoding on a symbolic font: the
                     // Differences overlay the font program's built-in
                     // encoding (s9.6.6.2). Codes the program leaves
