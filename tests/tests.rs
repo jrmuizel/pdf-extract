@@ -1,4 +1,5 @@
 use log::info;
+use lopdf::{Dictionary, Document, Object, Stream};
 use pdf_extract::extract_text;
 use test_log::test;
 // Shorthand for creating ExpectedText
@@ -80,4 +81,49 @@ impl ExpectedText<'_> {
             text
         );
     }
+}
+
+#[test]
+fn empty_operand_operators_are_skipped() {
+    // Craft a minimal in-memory PDF whose page content stream emits CS and w
+    // with zero operands. Both operators need one operand, and before the
+    // guard this made pdf-extract panic in `process_stream` with
+    // "index out of bounds: the len is 0 but the index is 0". The fix must
+    // skip such malformed operators and return Ok instead of aborting.
+    let mut doc = Document::new();
+
+    // Bare operators with missing operands: CS (colorspace) and w (line width).
+    let content = Stream::new(Dictionary::new(), b"BT\nCS\nw\nET\n".to_vec());
+    let content_id = doc.add_object(content);
+
+    let mut page = Dictionary::new();
+    page.set("Type", Object::Name(b"Page".to_vec()));
+    page.set("MediaBox", Object::Array(vec![
+        Object::Integer(0),
+        Object::Integer(0),
+        Object::Integer(612),
+        Object::Integer(792),
+    ]));
+    page.set("Contents", Object::Reference(content_id));
+    page.set("Resources", Object::Dictionary(Dictionary::new()));
+    let page_id = doc.add_object(Object::Dictionary(page));
+
+    let mut pages = Dictionary::new();
+    pages.set("Type", Object::Name(b"Pages".to_vec()));
+    pages.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+    pages.set("Count", Object::Integer(1));
+    let pages_id = doc.add_object(Object::Dictionary(pages));
+
+    let mut catalog = Dictionary::new();
+    catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+    catalog.set("Pages", Object::Reference(pages_id));
+    let catalog_id = doc.add_object(Object::Dictionary(catalog));
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("serialize crafted PDF");
+
+    let out = pdf_extract::extract_text_from_mem(&bytes)
+        .unwrap_or_else(|e| panic!("extract_text_from_mem failed on crafted PDF: {}", e));
+    assert!(out.is_empty(), "expected no text, got {:?}", out);
 }
