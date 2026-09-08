@@ -1,7 +1,3 @@
-// Cargo normally caps lints for registry dependencies. Keep the same behavior
-// for this path patch so upstream 0.12.0 warnings do not fail Syzygy's gates.
-#![allow(warnings)]
-
 extern crate lopdf;
 
 use adobe_cmap_parser::{ByteMapping, CodeRange, CIDRange};
@@ -26,7 +22,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::rc::Rc;
 use std::marker::PhantomData;
-use std::result::Result;
+pub use std::result::Result;
 use log::{warn, error, debug};
 mod core_fonts;
 mod glyphnames;
@@ -112,10 +108,10 @@ fn get_pages(doc: &Document) -> Option<&Dictionary> {
         Ok(&Object::Reference(ref id)) => {
             match doc.get_object(*id) {
                 Ok(&Object::Dictionary(ref pages)) => { return Some(pages); }
-                other => {dlog!("pages: {:?}", other)}
+                _other => {dlog!("pages: {:?}", _other)}
             }
         }
-        Ok(other) => { dlog!("pages: {:?}", other)}
+        Ok(_other) => { dlog!("pages: {:?}", _other)}
         Err(_) => {}
     }
     dlog!("catalog {:?}", catalog);
@@ -337,7 +333,6 @@ struct PdfSimpleFont<'a> {
 #[derive(Clone)]
 struct PdfType3Font<'a> {
     font: &'a Dictionary,
-    doc: &'a Document,
     encoding: Option<Vec<u16>>,
     unicode_map: Option<HashMap<CharCode, String>>,
     widths: HashMap<CharCode, f64>, // should probably just use i32 here
@@ -552,12 +547,12 @@ impl<'a> PdfSimpleFont<'a> {
                                     }
                                 }
                                 dlog!("{} = {} ({:?})", code, name, unicode);
-                                if let Some(ref mut unicode_map) = unicode_map {
+                                if let Some(ref mut _unicode_map) = unicode_map {
                                     // The unicode map might not have the code in it, but the code might
                                     // not be used so we don't want to panic here.
                                     // An example of this is the 'suppress' character in the TeX Latin Modern font.
                                     // This shows up in https://arxiv.org/pdf/2405.01295v1.pdf
-                                    dlog!("{} {:?}", code, unicode_map.get(&(code as u32)));
+                                    dlog!("{} {:?}", code, _unicode_map.get(&(code as u32)));
                                 }
                                 code += 1;
                             }
@@ -566,8 +561,8 @@ impl<'a> PdfSimpleFont<'a> {
                     }
                 }
                 // "Type" is optional
-                let name = encoding.get(b"Type").and_then(|x| x.as_name()).and_then(|x| Ok(pdf_to_utf8(x)));
-                dlog!("name: {}", name);
+                let _name = encoding.get(b"Type").and_then(|x| x.as_name()).and_then(|x| Ok(pdf_to_utf8(x)));
+                dlog!("name: {}", _name);
 
                 encoding_table = Some(table);
             }
@@ -617,7 +612,7 @@ impl<'a> PdfSimpleFont<'a> {
                 warn!("width count mismatch: first_char={}, count={}, last_char={}", first_char, i, last_char);
             }
         } else {
-            let name = if is_core_font(&base_name) {
+            let _name = if is_core_font(&base_name) {
                 &base_name
             } else {
                 warn!("no widths and not core font {:?}", base_name);
@@ -720,7 +715,7 @@ impl<'a> PdfSimpleFont<'a> {
     }
 
     #[allow(dead_code)]
-    fn get_descriptor(&self) -> Option<PdfFontDescriptor> {
+    fn get_descriptor(&self) -> Option<PdfFontDescriptor<'_>> {
         maybe_get_obj(self.doc, self.font, b"FontDescriptor").and_then(|desc| desc.as_dict().ok()).map(|desc| PdfFontDescriptor{desc: desc, doc: self.doc})
     }
 }
@@ -765,8 +760,8 @@ impl<'a> PdfType3Font<'a> {
                                     }
                                 }
                                 dlog!("{} = {} ({:?})", code, name, unicode);
-                                if let Some(ref unicode_map) = unicode_map {
-                                    dlog!("{} {:?}", code, unicode_map.get(&(code as u32)));
+                                if let Some(ref _unicode_map) = unicode_map {
+                                    dlog!("{} {:?}", code, _unicode_map.get(&(code as u32)));
                                 }
                                 code += 1;
                             }
@@ -775,8 +770,8 @@ impl<'a> PdfType3Font<'a> {
                     }
                 }
                 let name_encoded = encoding.get(b"Type");
-                if let Ok(Object::Name(name)) = name_encoded {
-                    dlog!("name: {}", pdf_to_utf8(name));
+                if let Ok(Object::Name(_name)) = name_encoded {
+                    dlog!("name: {}", pdf_to_utf8(_name));
                 } else {
                     dlog!("name not found");
                 }
@@ -809,7 +804,7 @@ impl<'a> PdfType3Font<'a> {
         } else {
             warn!("Type3 font missing FirstChar, LastChar, or Widths");
         }
-        PdfType3Font {doc, font, widths: width_map, encoding: encoding_table, unicode_map}
+        PdfType3Font {font, widths: width_map, encoding: encoding_table, unicode_map}
     }
 }
 
@@ -841,9 +836,10 @@ trait PdfFont : Debug {
 }
 
 impl<'a> dyn PdfFont + 'a {
-    fn char_codes(&'a self, chars: &'a [u8]) -> PdfFontIter {
+    fn char_codes(&'a self, chars: &'a [u8]) -> PdfFontIter<'a> {
         PdfFontIter{i: chars.iter(), font: self}
     }
+    #[expect(dead_code, reason = "Only consumed by upstream's disabled dlog diagnostics")]
     fn decode(&self, chars: &[u8]) -> String {
         let strings = self.char_codes(chars).map(|x| self.decode_char(x.0)).collect::<Vec<_>>();
         strings.join("")
@@ -1025,7 +1021,7 @@ fn get_unicode_map<'a>(doc: &'a Document, font: &'a Dictionary) -> Option<HashMa
 
 impl<'a> PdfCIDFont<'a> {
     fn new(doc: &'a Document, font: &'a Dictionary) -> PdfCIDFont<'a> {
-        let base_name = get_name_string(doc, font, b"BaseFont");
+        let _base_name = get_name_string(doc, font, b"BaseFont");
         let identity_encoding = ByteMapping { codespace: vec![CodeRange{width: 2, start: 0, end: 0xffff }], cid: vec![CIDRange{ src_code_lo: 0, src_code_hi: 0xffff, dst_CID_lo: 0 }]};
 
         let descendants = maybe_get_array(doc, font, b"DescendantFonts");
@@ -1034,7 +1030,7 @@ impl<'a> PdfCIDFont<'a> {
             .map(|o| maybe_deref(doc, o))
             .and_then(|o| o.as_dict().ok());
         let encoding_obj = maybe_get_obj(doc, font, b"Encoding");
-        dlog!("base_name {} {:?}", base_name, font);
+        dlog!("base_name {} {:?}", _base_name, font);
 
         let encoding = match encoding_obj {
             Some(&Object::Name(ref name)) => {
@@ -1115,8 +1111,8 @@ impl<'a> PdfCIDFont<'a> {
             }
         }
         if let Some(d) = ciddict {
-            if let Some(font_dict) = maybe_get_obj(doc, d, b"FontDescriptor") {
-                dlog!("{:?}", font_dict);
+            if let Some(_font_dict) = maybe_get_obj(doc, d, b"FontDescriptor") {
+                dlog!("{:?}", _font_dict);
             }
         }
         PdfCIDFont{doc, font, widths, to_unicode: unicode_map, encoding, default_width: Some(default_width as f64) }
@@ -1203,6 +1199,7 @@ impl<'a> fmt::Debug for PdfFontDescriptor<'a> {
 }
 
 #[derive(Clone, Debug)]
+#[expect(dead_code, reason = "Upstream retains sampled function metadata without an evaluator")]
 struct Type0Func {
     domain: Vec<f64>,
     range: Vec<f64>,
@@ -1235,6 +1232,7 @@ impl Type0Func {
 }
 
 #[derive(Clone, Debug)]
+#[expect(dead_code, reason = "Upstream retains exponential function metadata without an evaluator")]
 struct Type2Func {
     c0: Option<Vec<f64>>,
     c1: Option<Vec<f64>>,
@@ -1242,6 +1240,7 @@ struct Type2Func {
 }
 
 #[derive(Clone, Debug)]
+#[expect(dead_code, reason = "Upstream parses function metadata for color-space diagnostics")]
 enum Function {
     Type0(Type0Func),
     Type2(Type2Func),
@@ -1507,6 +1506,7 @@ impl Path {
 }
 
 #[derive(Clone, Debug)]
+#[expect(dead_code, reason = "Upstream retains parsed color metadata for non-text outputs")]
 pub struct CalGray {
     white_point: [f64; 3],
     black_point: Option<[f64; 3]>,
@@ -1514,6 +1514,7 @@ pub struct CalGray {
 }
 
 #[derive(Clone, Debug)]
+#[expect(dead_code, reason = "Upstream retains parsed color metadata for non-text outputs")]
 pub struct CalRGB {
     white_point: [f64; 3],
     black_point: Option<[f64; 3]>,
@@ -1522,6 +1523,7 @@ pub struct CalRGB {
 }
 
 #[derive(Clone, Debug)]
+#[expect(dead_code, reason = "Upstream retains parsed color metadata for non-text outputs")]
 pub struct Lab {
     white_point: [f64; 3],
     black_point: Option<[f64; 3]>,
@@ -1540,6 +1542,7 @@ pub enum AlternateColorSpace {
 }
 
 #[derive(Clone)]
+#[expect(dead_code, reason = "Upstream retains parsed color metadata for non-text outputs")]
 pub struct Separation {
     name: String,
     alternate_space: AlternateColorSpace,
@@ -2106,7 +2109,7 @@ fn insert_nbsp(input: &str) -> String {
 }
 
 impl<'a> HTMLOutput<'a> {
-    pub fn new(file: &mut dyn std::io::Write) -> HTMLOutput {
+    pub fn new(file: &mut dyn std::io::Write) -> HTMLOutput<'_> {
         HTMLOutput {
             file,
             flip_ctm: Transform2D::identity(),
@@ -2184,7 +2187,7 @@ pub struct SVGOutput<'a>  {
     file: &'a mut dyn std::io::Write
 }
 impl<'a> SVGOutput<'a> {
-    pub fn new(file: &mut dyn std::io::Write) -> SVGOutput {
+    pub fn new(file: &mut dyn std::io::Write) -> SVGOutput<'_> {
         SVGOutput{file}
     }
 }
@@ -2391,17 +2394,17 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
 pub fn print_metadata(doc: &Document) {
     dlog!("Version: {}", doc.version);
     if let Some(ref info) = get_info(&doc) {
-        for (k, v) in *info {
+        for (_k, v) in *info {
             match v {
-                &Object::String(ref s, StringFormat::Literal) => { dlog!("{}: {}", pdf_to_utf8(k), pdf_to_utf8(s)); }
+                &Object::String(ref _s, StringFormat::Literal) => { dlog!("{}: {}", pdf_to_utf8(_k), pdf_to_utf8(_s)); }
                 _ => {}
             }
         }
     }
-    if let Some(pages) = get_pages(&doc) {
-        dlog!("Page count: {}", get::<Option<i64>>(&doc, pages, b"Count").unwrap_or(0));
-        dlog!("Pages: {:?}", pages);
-        dlog!("Type: {:?}", pages.get(b"Type").and_then(|x| x.as_name()).ok());
+    if let Some(_pages) = get_pages(&doc) {
+        dlog!("Page count: {}", get::<Option<i64>>(&doc, _pages, b"Count").unwrap_or(0));
+        dlog!("Pages: {:?}", _pages);
+        dlog!("Type: {:?}", _pages.get(b"Type").and_then(|x| x.as_name()).ok());
     }
 }
 

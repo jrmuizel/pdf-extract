@@ -4,7 +4,7 @@
      https://github.com/apache/pdfbox/blob/trunk/pdfbox/src/main/resources/org/apache/pdfbox/resources/glyphlist/additional.txt
  */
 pub fn name_to_unicode(name: &str) -> Option<u16> {
-    const names: [(&'static str, u16); 4700] = [
+    const NAMES: [(&'static str, u16); 4700] = [
 ("A", 0x0041),
 ("AE", 0x00c6),
 ("AEacute", 0x01fc),
@@ -4706,6 +4706,6 @@ pub fn name_to_unicode(name: &str) -> Option<u16> {
 ("zuhiragana", 0x305a),
 ("zukatakana", 0x30ba)
     ];
-    let result = names.binary_search_by_key(&name, |&(name,_code)| &name);
-    result.ok().map(|indx| names[indx].1)
+    let result = NAMES.binary_search_by_key(&name, |&(name,_code)| &name);
+    result.ok().map(|indx| NAMES[indx].1)
 }

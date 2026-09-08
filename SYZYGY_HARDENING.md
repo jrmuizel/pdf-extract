@@ -27,9 +27,18 @@ identified.
 
 Validation:
 
+The upstream release is still 0.12.0 as of the 2026-09-08 dependency audit:
+<https://github.com/jrmuizel/pdf-extract/releases/tag/v0.12.0>.
+The malformed-input fixes and pinned parsers therefore remain necessary.
+The blanket `allow(warnings)` has been removed. Disabled diagnostic bindings
+are explicitly marked unused and lifetime signatures are explicit. Only the
+upstream's unevaluated color/function metadata retains documented, item-level
+`expect(dead_code)` annotations; new compiler warnings remain visible.
+
 ```text
 cargo check --lib
 cargo test --lib
+cargo test -p syzygy-search --all-features
 ```
 
 The upstream integration suite downloads linked PDF fixtures at test time. It
