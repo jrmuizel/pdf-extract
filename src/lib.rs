@@ -2,7 +2,7 @@ extern crate lopdf;
 
 use adobe_cmap_parser::{ByteMapping, CodeRange, CIDRange};
 use encoding_rs::UTF_16BE;
-use lopdf::content::Content;
+use lopdf::content::{Content, Operation};
 pub use lopdf::*;
 use euclid::*;
 use lopdf::encryption::DecryptionError;
@@ -1238,6 +1238,36 @@ fn as_num(o: &Object) -> f64 {
     }
 }
 
+fn operands_as_nums(operation: &Operation, expected: usize) -> Option<Vec<f64>> {
+    if operation.operands.len() < expected {
+        warn!(
+            "Skipping malformed PDF operator '{}' with {} operands; expected {}",
+            operation.operator,
+            operation.operands.len(),
+            expected
+        );
+        return None;
+    }
+
+    let mut nums = Vec::with_capacity(expected);
+    for operand in operation.operands.iter().take(expected) {
+        match operand {
+            &Object::Integer(i) => nums.push(i as f64),
+            &Object::Real(f) => nums.push(f.into()),
+            _ => {
+                warn!(
+                    "Skipping malformed PDF operator '{}' with non-numeric operand {:?}",
+                    operation.operator,
+                    operand
+                );
+                return None;
+            }
+        }
+    }
+
+    Some(nums)
+}
+
 #[derive(Clone)]
 struct TextState<'a>
 {
@@ -1796,44 +1826,61 @@ impl<'a> Processor<'a> {
                     apply_state(doc, &mut gs, state);
                 }
                 "i" => { dlog!("unhandled graphics state flattness operator {:?}", operation); }
-                "w" => { gs.line_width = as_num(&operation.operands[0]); }
+                "w" => {
+                    if let Some(nums) = operands_as_nums(&operation, 1) {
+                        gs.line_width = nums[0];
+                    }
+                }
                 "J" | "j" | "M" | "d" | "ri"  => { dlog!("unknown graphics state operator {:?}", operation); }
-                "m" => { path.ops.push(PathOp::MoveTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) }
-                "l" => { path.ops.push(PathOp::LineTo(as_num(&operation.operands[0]), as_num(&operation.operands[1]))) }
+                "m" => {
+                    if let Some(nums) = operands_as_nums(&operation, 2) {
+                        path.ops.push(PathOp::MoveTo(nums[0], nums[1]))
+                    }
+                }
+                "l" => {
+                    if let Some(nums) = operands_as_nums(&operation, 2) {
+                        path.ops.push(PathOp::LineTo(nums[0], nums[1]))
+                    }
+                }
                 "c" => {
-                    path.ops.push(PathOp::CurveTo(
-                        as_num(&operation.operands[0]),
-                        as_num(&operation.operands[1]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3]),
-                        as_num(&operation.operands[4]),
-                        as_num(&operation.operands[5])))
+                    if let Some(nums) = operands_as_nums(&operation, 6) {
+                        path.ops.push(PathOp::CurveTo(
+                            nums[0],
+                            nums[1],
+                            nums[2],
+                            nums[3],
+                            nums[4],
+                            nums[5]))
+                    }
                 }
                 "v" => {
-                    let (x, y) = path.current_point();
-                    path.ops.push(PathOp::CurveTo(
-                        x,
-                        y,
-                        as_num(&operation.operands[0]),
-                        as_num(&operation.operands[1]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3])))
+                    if let Some(nums) = operands_as_nums(&operation, 4) {
+                        let (x, y) = path.current_point();
+                        path.ops.push(PathOp::CurveTo(
+                            x,
+                            y,
+                            nums[0],
+                            nums[1],
+                            nums[2],
+                            nums[3]))
+                    }
                 }
                 "y" => {
-                    path.ops.push(PathOp::CurveTo(
-                        as_num(&operation.operands[0]),
-                        as_num(&operation.operands[1]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3]),
-                        as_num(&operation.operands[2]),
-                        as_num(&operation.operands[3])))
+                    if let Some(nums) = operands_as_nums(&operation, 4) {
+                        path.ops.push(PathOp::CurveTo(
+                            nums[0],
+                            nums[1],
+                            nums[2],
+                            nums[3],
+                            nums[2],
+                            nums[3]))
+                    }
                 }
                 "h" => { path.ops.push(PathOp::Close) }
                 "re" => {
-                    path.ops.push(PathOp::Rect(as_num(&operation.operands[0]),
-                                               as_num(&operation.operands[1]),
-                                               as_num(&operation.operands[2]),
-                                               as_num(&operation.operands[3])))
+                    if let Some(nums) = operands_as_nums(&operation, 4) {
+                        path.ops.push(PathOp::Rect(nums[0], nums[1], nums[2], nums[3]))
+                    }
                 }
                 "s" | "f*" | "B" | "B*" | "b" => {
                     dlog!("unhandled path op {:?}", operation);
