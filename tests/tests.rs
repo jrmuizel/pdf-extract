@@ -16,7 +16,18 @@ macro_rules! expected {
 // and then check if the text is correctly extracted
 #[test]
 fn extract_expected_text() {
-    let docs = vec![expected!("documents_stack.pdf.link", "mouse button until")];
+    let docs = vec![
+        expected!("documents_stack.pdf.link", "mouse button until"),
+        // A declared /Encoding (WinAnsiEncoding) must supersede the
+        // font program's built-in encoding: the embedded CFF maps the
+        // byte for eacute to Oslash via its Standard-encoded builtin.
+        //
+        // Committed rather than a `.pdf.link` like its neighbours because it
+        // is synthetic and so has no URL to fetch: 1926 bytes, hand-written
+        // around a minimal CFF, and outside the published crate either way
+        // since `include` names only `src/**/*` and the README.
+        expected!("declared-encoding-overrides-builtin.pdf", "Moor\u{e9}"),
+    ];
     for doc in docs {
         doc.test();
     }

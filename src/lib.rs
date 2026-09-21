@@ -449,6 +449,53 @@ impl<'a> PdfSimpleFont<'a> {
             //dlog!("charset {:?}", charset);
         }
 
+        // The font program's built-in encoding as a code -> unicode
+        // table, when the program carries one (a Type1 FontFile or a
+        // Type1C FontFile3). It is the base an /Encoding dictionary
+        // without a BaseEncoding builds on (PDF 32000-1 s9.6.6).
+        let builtin_base: Option<Vec<u16>> = if let Some(ref map) = unicode_map {
+            let mut table = vec![0u16; 256];
+            for (&code, s) in map.iter() {
+                if code < 256 {
+                    if let Some(unit) = s.encode_utf16().next() {
+                        table[code as usize] = unit;
+                    }
+                }
+            }
+            Some(table)
+        } else if let Some(ref type1_encoding) = type1_encoding {
+            let mut table = Vec::from(PDFDocEncoding);
+            for (code, name) in type1_encoding {
+                if let Some(unicode) = glyphnames::name_to_unicode(&pdf_to_utf8(name)) {
+                    table[*code as usize] = unicode;
+                }
+            }
+            Some(table)
+        } else {
+            None
+        };
+
+        // A symbolic font (FontDescriptor Flags bit 3) bases a
+        // Differences-only /Encoding on its built-in encoding; a
+        // nonsymbolic one on the standard base (s9.6.6.2).
+        let symbolic = descriptor
+            .and_then(|d| maybe_get::<i64>(doc, d, b"Flags"))
+            .map_or(false, |flags| flags & 4 != 0);
+
+        // PDF 32000-1 s9.6.6: a declared /Encoding supersedes the font
+        // program's built-in encoding, so the built-in map must not
+        // answer decode lookups ahead of the declared table -- e.g.
+        // Arbortext Type1C subsets keep Standard-slot names (Oslash at
+        // 0xE9) where the declared WinAnsi text means eacute. The map
+        // stays present-but-empty so a Differences entry with an
+        // unresolvable name (issue #76) can still register into it; the cost
+        // is that `decode_char` then misses on every code and logs a debug
+        // line for it, which `log` builds lazily and so costs nothing unless
+        // that level is on.
+        if matches!(encoding, Some(&Object::Name(_)) | Some(&Object::Dictionary(_))) {
+            unicode_map = unicode_map.map(|_| HashMap::new());
+        }
+
         let mut unicode_map = match unicode_map {
             Some(mut unicode_map) => {
                 unicode_map.extend(get_unicode_map(doc, font).unwrap_or(HashMap::new()));
@@ -471,6 +518,18 @@ impl<'a> PdfSimpleFont<'a> {
                 let mut table = if let Some(base_encoding) = maybe_get_name(doc, encoding, b"BaseEncoding") {
                     dlog!("BaseEncoding {:?}", base_encoding);
                     encoding_to_unicode_table(base_encoding)
+                } else if let (Some(builtin), true) = (builtin_base.as_deref(), symbolic) {
+                    // No BaseEncoding on a symbolic font: the
+                    // Differences overlay the font program's built-in
+                    // encoding (s9.6.6.2). Codes the program leaves
+                    // unmapped fall back to the standard base.
+                    let mut table = Vec::from(PDFDocEncoding);
+                    for (code, &unit) in builtin.iter().enumerate() {
+                        if unit != 0 {
+                            table[code] = unit;
+                        }
+                    }
+                    table
                 } else {
                     Vec::from(PDFDocEncoding)
                 };
