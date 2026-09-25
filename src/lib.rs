@@ -1578,7 +1578,7 @@ impl<'a> Processor<'a> {
         Processor { font_table: HashMap::new(), _none: PhantomData }
     }
 
-    fn process_stream(&mut self, doc: &'a Document, content: Vec<u8>, resources: &'a Dictionary, media_box: &MediaBox, output: &mut dyn OutputDev, page_num: u32) -> Result<(), OutputError> {
+    fn process_stream(&mut self, doc: &'a Document, content: Vec<u8>, resources: &'a Dictionary, media_box: &MediaBox, output: &mut dyn OutputDev, page_num: u32, ctm: Transform) -> Result<(), OutputError> {
         let content = Content::decode(&content).unwrap();
         let mut gs: GraphicsState = GraphicsState {
             ts: TextState {
@@ -1596,7 +1596,7 @@ impl<'a> Processor<'a> {
             stroke_color: Vec::new(),
             stroke_colorspace: ColorSpace::DeviceGray,
             line_width: 1.,
-            ctm: Transform2D::identity(),
+            ctm,
             smask: None
         };
         //let mut ts = &mut gs.ts;
@@ -1863,9 +1863,20 @@ impl<'a> Processor<'a> {
                     let xobject: &Dictionary = get(&doc, resources, b"XObject");
                     let name = operation.operands[0].as_name().unwrap();
                     let xf: &Stream = get(&doc, xobject, name);
+                    // Only form XObjects contain a content stream; image (and PS) XObjects hold other data.
+                    let subtype: Option<&Object> = get(&doc, &xf.dict, b"Subtype");
+                    if subtype.and_then(|s| s.as_name().ok()) != Some(&b"Form"[..]) {
+                        continue;
+                    }
                     let resources = maybe_get_obj(&doc, &xf.dict, b"Resources").and_then(|n| n.as_dict().ok()).unwrap_or(resources);
+                    // The form is drawn with its /Matrix concatenated with the CTM in effect at the `Do`.
+                    let matrix: Option<Vec<f64>> = get(&doc, &xf.dict, b"Matrix");
+                    let form_ctm = match matrix {
+                        Some(m) if m.len() == 6 => gs.ctm.pre_transform(&Transform2D::row_major(m[0], m[1], m[2], m[3], m[4], m[5])),
+                        _ => gs.ctm,
+                    };
                     let contents = get_contents(xf);
-                    self.process_stream(&doc, contents, resources, &media_box, output, page_num)?;
+                    self.process_stream(&doc, contents, resources, &media_box, output, page_num, form_ctm)?;
                 }
                 _ => { dlog!("unknown operation {:?}", operation); }
 
@@ -2415,7 +2426,7 @@ fn output_doc_inner<'a>(page_num: u32, object_id: ObjectId, doc: &'a Document, p
     let art_box = get::<Option<Vec<f64>>>(&doc, page_dict, b"ArtBox")
         .map(|x| (x[0], x[1], x[2], x[3]));
     output.begin_page(page_num, &media_box, art_box)?;
-    p.process_stream(&doc, doc.get_page_content(object_id).unwrap(), resources, &media_box, output, page_num)?;
+    p.process_stream(&doc, doc.get_page_content(object_id).unwrap(), resources, &media_box, output, page_num, Transform2D::identity())?;
     output.end_page()?;
     Ok(())
 }
