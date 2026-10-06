@@ -81,3 +81,123 @@ impl ExpectedText<'_> {
         );
     }
 }
+
+/// A one-line page in a CID font whose digits' widths use the range form
+/// `c_first c_last w`, as Chrome writes them, followed by a run placed with
+/// Td at the true end of the first run (the way kerned text is laid out).
+fn cid_range_widths_pdf(first: &str, second: &str) -> Vec<u8> {
+    use pdf_extract::content::{Content, Operation};
+    use pdf_extract::{dictionary, Document, Object, Stream, StringFormat};
+
+    let width = |c: char| -> i64 {
+        match c {
+            '0'..='9' | 'L' => 556,
+            ' ' => 278,
+            'P' => 667,
+            'T' => 611,
+            other => panic!("no width for {other:?}"),
+        }
+    };
+    let mut used: Vec<char> = first.chars().chain(second.chars()).collect();
+    used.sort_unstable();
+    used.dedup();
+    // digits as one range, every other glyph in the array form
+    let mut w: Vec<Object> = vec![48.into(), 57.into(), 556.into()];
+    for c in used.iter().filter(|c| !c.is_ascii_digit()) {
+        w.push((*c as i64).into());
+        w.push(vec![Object::from(width(*c))].into());
+    }
+    let bfchars: String = used
+        .iter()
+        .map(|c| format!("<{:04X}> <{:04X}>\n", *c as u32, *c as u32))
+        .collect();
+    let cmap = format!(
+        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n\
+         /CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n\
+         1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n\
+         {} beginbfchar\n{bfchars}endbfchar\nendcmap\n\
+         CMapName currentdict /CMap defineresource pop\nend\nend\n",
+        used.len()
+    );
+
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+    let to_unicode = doc.add_object(Stream::new(dictionary! {}, cmap.into_bytes()));
+    let descriptor = doc.add_object(dictionary! {
+        "Type" => "FontDescriptor",
+        "FontName" => "AAAAAA+ArialMT",
+        "Flags" => 32,
+        "FontBBox" => vec![0.into(), (-200).into(), 1000.into(), 900.into()],
+        "ItalicAngle" => 0,
+        "Ascent" => 900,
+        "Descent" => -200,
+        "CapHeight" => 700,
+        "StemV" => 80,
+    });
+    let cid_font = doc.add_object(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "CIDFontType2",
+        "BaseFont" => "AAAAAA+ArialMT",
+        "CIDSystemInfo" => dictionary! {
+            "Registry" => Object::string_literal("Adobe"),
+            "Ordering" => Object::string_literal("Identity"),
+            "Supplement" => 0,
+        },
+        "FontDescriptor" => descriptor,
+        "DW" => 500,
+        "W" => w,
+        "CIDToGIDMap" => "Identity",
+    });
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type0",
+        "BaseFont" => "AAAAAA+ArialMT",
+        "Encoding" => "Identity-H",
+        "DescendantFonts" => vec![cid_font.into()],
+        "ToUnicode" => to_unicode,
+    });
+    let resources = doc.add_object(dictionary! { "Font" => dictionary! { "F1" => font } });
+    let codes = |s: &str| -> Object {
+        let bytes: Vec<u8> = s.chars().flat_map(|c| (c as u16).to_be_bytes()).collect();
+        Object::String(bytes, StringFormat::Hexadecimal)
+    };
+    // font size 10: an advance of 1000 thousandths of an em is 10 units
+    let advance = first.chars().map(width).sum::<i64>() as f32 / 100.;
+    let content = Content {
+        operations: vec![
+            Operation::new("BT", vec![]),
+            Operation::new("Tf", vec!["F1".into(), 10.into()]),
+            Operation::new("Tm", vec![1.into(), 0.into(), 0.into(), 1.into(), 72.into(), 700.into()]),
+            Operation::new("Tj", vec![codes(first)]),
+            Operation::new("Td", vec![advance.into(), 0.into()]),
+            Operation::new("Tj", vec![codes(second)]),
+            Operation::new("ET", vec![]),
+        ],
+    };
+    let contents = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "Contents" => contents,
+        "Resources" => resources,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).unwrap();
+    bytes
+}
+
+#[test]
+fn cid_width_ranges_give_their_glyphs_the_range_width() {
+    // with the digits read at DW (500) instead of 556, the second run starts
+    // past where the first one ends and reads as a new word: "649 PL T"
+    let bytes = cid_range_widths_pdf("649 PL", "T");
+    let out = pdf_extract::extract_text_from_mem(&bytes).unwrap();
+    assert_eq!(out.trim(), "649 PLT");
+}

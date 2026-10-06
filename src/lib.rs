@@ -1024,10 +1024,13 @@ impl<'a> PdfCIDFont<'a> {
                     i += 2;
                 } else {
                     let c_first = w[i].as_i64().expect("first should be num");
-                    let c_last = w[i].as_i64().expect("last should be num");
-                    let c_width = as_num(&w[i]);
-                    for id in c_first..c_last {
-                        widths.insert(id as CharCode, c_width);
+                    let c_last = w[i+1].as_i64().expect("last should be num");
+                    let c_width = as_num(&w[i+2]);
+                    // CIDs are at most 16 bits; a wider range is malformed
+                    if c_first <= c_last && c_last - c_first <= 0xFFFF {
+                        for id in c_first..=c_last {
+                            widths.insert(id as CharCode, c_width);
+                        }
                     }
                     i += 3;
                 }
