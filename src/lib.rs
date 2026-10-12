@@ -316,6 +316,7 @@ struct PdfType3Font<'a> {
     encoding: Option<Vec<u16>>,
     unicode_map: Option<HashMap<CharCode, String>>,
     widths: HashMap<CharCode, f64>, // should probably just use i32 here
+    missing_width: f64,
 }
 
 
@@ -760,7 +761,8 @@ impl<'a> PdfType3Font<'a> {
             i += 1;
         }
         assert_eq!(first_char + i - 1, last_char);
-        PdfType3Font {doc, font, widths: width_map, encoding: encoding_table, unicode_map}
+        let missing_width = get::<Option<f64>>(doc, font, b"MissingWidth").unwrap_or(0.);
+        PdfType3Font {doc, font, widths: width_map, encoding: encoding_table, unicode_map, missing_width}
     }
 }
 
@@ -862,7 +864,10 @@ impl<'a> PdfFont for PdfType3Font<'a> {
         if let Some(width) = width {
             return *width;
         } else {
-            panic!("missing width for {} {:?}", id, self.font);
+            // A code outside the declared FirstChar..LastChar range falls back
+            // to MissingWidth (default 0), as the PDF spec requires, instead of
+            // panicking. Real statements use codes beyond the width table.
+            return self.missing_width;
         }
     }
     /*fn decode(&self, chars: &[u8]) -> String {
