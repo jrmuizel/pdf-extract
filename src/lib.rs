@@ -160,6 +160,38 @@ fn pdf_to_utf8(s: &[u8]) -> String {
     }
 }
 
+fn actual_text_object<'a>(doc: &'a Document, object: &'a Object) -> Option<&'a Object> {
+    match object {
+        Object::Reference(id) => doc.get_object(*id).ok(),
+        _ => Some(object),
+    }
+}
+
+fn actual_text(doc: &Document, resources: &Dictionary, properties: &Object) -> Option<String> {
+    let properties = actual_text_object(doc, properties)?;
+    let dictionary = match properties {
+        Object::Name(name) => {
+            let lists = actual_text_object(doc, resources.get(b"Properties").ok()?)?
+                .as_dict().ok()?;
+            actual_text_object(doc, lists.get(name).ok()?)?.as_dict().ok()?
+        }
+        Object::Dictionary(dictionary) => dictionary,
+        _ => return None,
+    };
+    let bytes = actual_text_object(doc, dictionary.get(b"ActualText").ok()?)?
+        .as_str().ok()?;
+    if let Some(bytes) = bytes.strip_prefix(&[0xfe, 0xff]) {
+        Some(UTF_16BE.decode_without_bom_handling(bytes).0.into_owned())
+    } else if let Some(bytes) = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]) {
+        Some(String::from_utf8_lossy(bytes).into_owned())
+    } else {
+        Some(bytes.iter().map(|byte| {
+            char::from_u32(PDFDocEncoding[*byte as usize] as u32)
+                .unwrap_or(char::REPLACEMENT_CHARACTER)
+        }).collect())
+    }
+}
+
 fn to_utf8(encoding: &[u16], s: &[u8]) -> String {
     if s.len() > 2 && s[0] == 0xfe && s[1] == 0xff {
         return UTF_16BE.decode_without_bom_handling_and_without_replacement(&s[2..]).unwrap().to_string()
@@ -1852,10 +1884,20 @@ impl<'a> Processor<'a> {
                     path.ops.clear();
                 }
                 "BMC" | "BDC" => {
-                    mc_stack.push(operation);
+                    let text = if operation.operator == "BDC" {
+                        operation.operands.get(1).and_then(|p| actual_text(doc, resources, p))
+                    } else {
+                        None
+                    };
+                    if let Some(text) = &text {
+                        output.begin_actual_text(text)?;
+                    }
+                    mc_stack.push(text.is_some());
                 }
                 "EMC" => {
-                    mc_stack.pop();
+                    if mc_stack.pop() == Some(true) {
+                        output.end_actual_text()?;
+                    }
                 }
                 "Do" => {
                     // `Do` process an entire subdocument, so we do a recursive call to `process_stream`
@@ -1871,12 +1913,22 @@ impl<'a> Processor<'a> {
 
             }
         }
+        // A malformed unclosed sequence must not leak a replacement into the next page/form.
+        for has_actual_text in mc_stack.into_iter().rev() {
+            if has_actual_text {
+                output.end_actual_text()?;
+            }
+        }
         Ok(())
     }
 }
 
 
 pub trait OutputDev {
+    /// Begin a marked-content replacement. Geometry-oriented outputs may ignore it.
+    fn begin_actual_text(&mut self, _text: &str) -> Result<(), OutputError> {Ok(())}
+    /// End the most recently begun marked-content replacement.
+    fn end_actual_text(&mut self) -> Result<(), OutputError> {Ok(())}
     fn begin_page(&mut self, page_num: u32, media_box: &MediaBox, art_box: Option<(f64, f64, f64, f64)>)-> Result<(), OutputError>;
     fn end_page(&mut self)-> Result<(), OutputError>;
     fn output_character(&mut self, trm: &Transform, width: f64, spacing: f64, font_size: f64, char: &str) -> Result<(), OutputError>;
@@ -2134,6 +2186,12 @@ pub struct PlainTextOutput<W: ConvertToFmt>   {
     last_y: f64,
     first_char: bool,
     flip_ctm: Transform,
+    replacement_text: Vec<ReplacementText>,
+}
+
+struct ReplacementText {
+    text: String,
+    emitted: bool,
 }
 
 impl<W: ConvertToFmt> PlainTextOutput<W> {
@@ -2144,6 +2202,7 @@ impl<W: ConvertToFmt> PlainTextOutput<W> {
             first_char: false,
             last_y: 0.,
             flip_ctm: Transform2D::identity(),
+            replacement_text: Vec::new(),
         }
     }
 }
@@ -2151,6 +2210,20 @@ impl<W: ConvertToFmt> PlainTextOutput<W> {
 /* There are some structural hints that PDFs can use to signal word and line endings:
  * however relying on these is not likely to be sufficient. */
 impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
+    fn begin_actual_text(&mut self, text: &str) -> Result<(), OutputError> {
+        self.replacement_text.push(ReplacementText { text: text.to_owned(), emitted: false });
+        Ok(())
+    }
+    fn end_actual_text(&mut self) -> Result<(), OutputError> {
+        if let Some(replacement) = self.replacement_text.pop() {
+            if self.replacement_text.is_empty() && !replacement.emitted {
+                // ActualText may replace paths/images with no text-showing operator.
+                use std::fmt::Write;
+                write!(self.writer, "{}", replacement.text)?;
+            }
+        }
+        Ok(())
+    }
     fn begin_page(&mut self, _page_num: u32, media_box: &MediaBox, _: Option<ArtBox>) -> Result<(), OutputError> {
         self.flip_ctm = Transform2D::row_major(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
         Ok(())
@@ -2165,24 +2238,38 @@ impl<W: ConvertToFmt> OutputDev for PlainTextOutput<W> {
         let transformed_font_size = (transformed_font_size_vec.x*transformed_font_size_vec.y).sqrt();
         let (x, y) = (position.m31, position.m32);
         use std::fmt::Write;
-        //dlog!("last_end: {} x: {}, width: {}", self.last_end, x, width);
-        if self.first_char {
-            if (y - self.last_y).abs() > transformed_font_size * 1.5 {
-                write!(self.writer, "\n")?;
+        // The outer replacement covers all nested content. Still consume every glyph's
+        // geometry so spacing after the sequence uses its actual painted endpoint.
+        let text = if let Some(replacement) = self.replacement_text.first_mut() {
+            if replacement.emitted {
+                None
+            } else {
+                replacement.emitted = true;
+                Some(replacement.text.as_str())
             }
+        } else {
+            Some(char)
+        };
+        if let Some(text) = text.filter(|text| !text.is_empty()) {
+            //dlog!("last_end: {} x: {}, width: {}", self.last_end, x, width);
+            if self.first_char {
+                if (y - self.last_y).abs() > transformed_font_size * 1.5 {
+                    write!(self.writer, "\n")?;
+                }
 
-            // we've moved to the left and down
-            if x < self.last_end && (y - self.last_y).abs() > transformed_font_size * 0.5 {
-                write!(self.writer, "\n")?;
-            }
+                // we've moved to the left and down
+                if x < self.last_end && (y - self.last_y).abs() > transformed_font_size * 0.5 {
+                    write!(self.writer, "\n")?;
+                }
 
-            if x > self.last_end + transformed_font_size * 0.1 {
-                dlog!("width: {}, space: {}, thresh: {}", width, x - self.last_end, transformed_font_size * 0.1);
-                write!(self.writer, " ")?;
+                if x > self.last_end + transformed_font_size * 0.1 {
+                    dlog!("width: {}, space: {}, thresh: {}", width, x - self.last_end, transformed_font_size * 0.1);
+                    write!(self.writer, " ")?;
+                }
             }
+            //let norm = unicode_normalization::UnicodeNormalization::nfkc(char);
+            write!(self.writer, "{}", text)?;
         }
-        //let norm = unicode_normalization::UnicodeNormalization::nfkc(char);
-        write!(self.writer, "{}", char)?;
         self.first_char = false;
         self.last_y = y;
         self.last_end = x + width * transformed_font_size;

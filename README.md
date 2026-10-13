@@ -5,6 +5,9 @@
 
 A rust library to extract content from PDF files.
 
+Plain-text extraction uses marked-content `ActualText` replacement strings when
+provided, including Unicode text.
+
 ```rust
 let bytes = std::fs::read("tests/docs/simple.pdf").unwrap();
 let out = pdf_extract::extract_text_from_mem(&bytes).unwrap();
