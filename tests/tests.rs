@@ -16,7 +16,11 @@ macro_rules! expected {
 // and then check if the text is correctly extracted
 #[test]
 fn extract_expected_text() {
-    let docs = vec![expected!("documents_stack.pdf.link", "mouse button until")];
+    let docs = vec![
+        expected!("documents_stack.pdf.link", "mouse button until"),
+        // ps2pdf draws the second line with the ' operator
+        expected!("ghostscript-quote.pdf", "Price: $12.50 - 30% off"),
+    ];
     for doc in docs {
         doc.test();
     }

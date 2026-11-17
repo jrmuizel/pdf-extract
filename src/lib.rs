@@ -1780,6 +1780,19 @@ impl<'a> Processor<'a> {
                     dlog!("T* matrix {:?}", gs.ts.tm);
                     output.end_line()?;
                 }
+                "'" | "\"" => {
+                    // Move to the next line and show the string; `"` also sets word and character spacing
+                    if operation.operator == "\"" {
+                        gs.ts.word_spacing = as_num(&operation.operands[0]);
+                        gs.ts.character_spacing = as_num(&operation.operands[1]);
+                    }
+                    tlm = tlm.pre_transform(&Transform2D::create_translation(0.0, -gs.ts.leading));
+                    gs.ts.tm = tlm;
+                    output.end_line()?;
+                    if let Some(Object::String(ref s, _)) = operation.operands.last() {
+                        show_text(&mut gs, s, &tlm, &flip_ctm, output)?;
+                    }
+                }
                 "q" => { gs_stack.push(gs.clone()); }
                 "Q" => {
                     let s = gs_stack.pop();
