@@ -1863,9 +1863,20 @@ impl<'a> Processor<'a> {
                     let xobject: &Dictionary = get(&doc, resources, b"XObject");
                     let name = operation.operands[0].as_name().unwrap();
                     let xf: &Stream = get(&doc, xobject, name);
-                    let resources = maybe_get_obj(&doc, &xf.dict, b"Resources").and_then(|n| n.as_dict().ok()).unwrap_or(resources);
+                    let form_resources = maybe_get_obj(&doc, &xf.dict, b"Resources").and_then(|n| n.as_dict().ok());
                     let contents = get_contents(xf);
-                    self.process_stream(&doc, contents, resources, &media_box, output, page_num)?;
+                    match form_resources {
+                        Some(form_resources) => {
+                            // Font names are scoped to a resource dictionary, so a form with
+                            // its own /Resources must not see (or leave behind) the fonts the
+                            // enclosing stream cached under the same names.
+                            let outer = std::mem::take(&mut self.font_table);
+                            let result = self.process_stream(&doc, contents, form_resources, &media_box, output, page_num);
+                            self.font_table = outer;
+                            result?;
+                        }
+                        None => self.process_stream(&doc, contents, resources, &media_box, output, page_num)?,
+                    }
                 }
                 _ => { dlog!("unknown operation {:?}", operation); }
 
